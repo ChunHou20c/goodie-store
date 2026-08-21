@@ -1,6 +1,121 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap');
 @import "tailwindcss";
 
 /* cargo-leptos runs `tailwindcss --input style/tailwind.css` from the crate
    root; @source paths are relative to this file. Being explicit keeps the
    class scan deterministic instead of relying on auto-detection. */
 @source "../src/**/*.rs";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Modernist — design tokens, ported from the Claude Design system
+   (_ds/modernist-45d916d8/styles.css). Flat, architectural, Archivo
+   throughout: one red accent on a light ground, zero corner radius, 2px
+   rules doing the organising. Take colours from these tokens, never a hex.
+   ═══════════════════════════════════════════════════════════════════════ */
+@theme {
+  --color-ground: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-ink: #201e1d;
+  --color-accent: #ec3013;
+
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  --color-accent-100: #fff2ef;
+  --color-accent-200: #ffe0d9;
+  --color-accent-300: #ffc4b8;
+  --color-accent-400: #ff9783;
+  --color-accent-500: #ff563c;
+  --color-accent-600: #dd2b0f;
+  --color-accent-700: #ae1800;
+  --color-accent-800: #7c1405;
+  --color-accent-900: #4d170e;
+
+  --font-sans: "Archivo", system-ui, sans-serif;
+  --font-heading: "Archivo", system-ui, sans-serif;
+
+  /* Nothing is rounded in this system — on purpose. */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+
+  --animate-toast: kToast 2.4s ease forwards;
+  @keyframes kToast {
+    0%   { opacity: 0; transform: translateY(10px); }
+    12%  { opacity: 1; transform: none; }
+    88%  { opacity: 1; transform: none; }
+    100% { opacity: 0; transform: translateY(10px); }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* The app is a phone-width column; the ground behind it is one step darker
+     so the 2px edge rules have something to sit against on a desktop. */
+  body {
+    background: var(--color-neutral-300);
+    color: var(--color-ink);
+    font-weight: 400;
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+  }
+  /* Themed states, never browser defaults. */
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+  ::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+  /* The phone-sized column scrolls; the scrollbar would cut the 2px rules. */
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  * { scrollbar-width: none; }
+}
+
+@layer components {
+  /* The system's one button. Label sizes match .input so the pair can sit in
+     a row together; wide buttons push a trailing value right with
+     `justify-between`, which keeps the label flush left as the system asks. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    text-decoration: none;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 14px;
+    line-height: 1.2;
+    color: var(--color-ink);
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 8px 14px;
+    border-radius: 0;
+  }
+  .btn svg { display: block; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary { background: var(--color-accent); color: var(--color-ground); }
+  .btn-primary:hover { background: var(--color-accent-600); }
+  .btn-primary:active { background: var(--color-accent-700); }
+  .btn-secondary { border-color: color-mix(in srgb, var(--color-ink) 40%, transparent); }
+  .btn-secondary:hover { background: color-mix(in srgb, var(--color-ink) 7%, transparent); }
+  .btn-secondary:active { background: color-mix(in srgb, var(--color-ink) 14%, transparent); }
+
+  /* Every content photograph prints black and white. */
+  .photo { filter: grayscale(1) contrast(1.08); }
+}

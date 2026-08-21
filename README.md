@@ -134,14 +134,57 @@ mismatch, so they move together:
 
 The dev shell prints a warning if `Cargo.lock` and the CLI drift apart.
 
+## The app — Kessel, Issue 14
+
+The four screens implement `Kessel Shop.dc.html` from the *Mobile shopping app
+design* Claude Design project, on its **Modernist** design system.
+
+| Route | Screen |
+| --- | --- |
+| `/` | The issue: cover story, then the numbered index |
+| `/search` | Filter chips, cycling sort, two-column results |
+| `/p/:id` | Photograph, price, spec table, the desk's note |
+| `/bag` | Lines with steppers, totals, checkout |
+
+- `src/catalog.rs` — the six objects, the chip predicates and the search. Static
+  today; this is the shape the Postgres-backed catalogue will return.
+- `src/shop.rs` — bag, saved list, search controls and the toast, in one struct
+  provided through context.
+- `src/app.rs` — the shell: top bar, sticky action, bottom tabs. All of the
+  chrome is derived from the route, not from a screen flag.
+- `src/screens/`, `src/ui.rs` — one file per screen; the Lucide icon set and the
+  photo slot.
+
+Two deliberate departures from the prototype:
+
+- The prototype switches screens in local state; here each screen is a **real
+  route**, so a product is linkable, the back button works and the four screens
+  server-render. Navigation is `<A>`, so it also works before hydration.
+- The prototype seeds a bag with one item. This starts **empty** — a shop that
+  puts something in your bag on first load would be wrong, and the empty state
+  is part of the design anyway.
+
+The toast is anchored just above the bottom chrome rather than the design's flat
+96px, which landed it on top of the button it reports on.
+
 ## Styling (Tailwind CSS v4)
 
-`style/tailwind.css` is the only stylesheet entrypoint:
+`style/tailwind.css` is the only stylesheet entrypoint. It carries the
+Modernist tokens — colours and their 100–900 ramps, Archivo, zero radius, the
+shadow scale — in an `@theme` block, so they come out as ordinary utilities
+(`bg-accent`, `text-accent-700`, `border-ink/40`), plus a small `@layer
+components` for the system's `.btn`:
 
 ```css
+@import url('https://fonts.googleapis.com/css2?family=Archivo:...');
 @import "tailwindcss";
 @source "../src/**/*.rs";
+
+@theme { --color-ink: #201e1d; --color-accent: #ec3013; /* … */ }
 ```
+
+Take colours from the tokens rather than hard-coding a hex — that is what keeps
+the app and the design system in step.
 
 `Cargo.toml` points cargo-leptos at it with `tailwind-input-file = "style/tailwind.css"`,
 and cargo-leptos runs the pinned `tailwindcss` binary, pipes the result through
