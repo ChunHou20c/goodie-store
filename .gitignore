@@ -12,3 +12,7 @@ Cargo.lock
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+# local postgres cluster (nix dev shell)
+.pg/
+.direnv/

@@ -89,3 +89,47 @@ Finally, run the server binary.
 ## Licensing
 
 This template itself is released under the Unlicense. You should replace the LICENSE for your own application with an appropriate license if you plan to release it publicly.
+
+## Development environment (Nix)
+
+Everything the app builds against is pinned in `flake.nix` — no `cargo install`, no
+system Postgres, no npm-installed Tailwind.
+
+```bash
+nix develop        # or: direnv allow   (an .envrc with `use flake` is included)
+```
+
+The shell provides:
+
+| Tool | Source | Notes |
+| --- | --- | --- |
+| rustc / cargo / clippy / rustfmt / rust-analyzer | `rust-overlay` via `rust-toolchain.toml` | nightly, with the `wasm32-unknown-unknown` target |
+| `cargo-leptos` | nixpkgs | built with `no_downloads`, so it uses the tools below from `PATH` |
+| `wasm-bindgen` | nixpkgs (`wasm-bindgen-cli_0_2_126`) | must match the `wasm-bindgen` crate exactly |
+| `wasm-opt`, `sass`, `tailwindcss` | binaryen, dart-sass, tailwindcss v4 | the other binaries `cargo-leptos` shells out to |
+| `node`, `npx` | nodejs 24 | Tailwind plugins, Playwright e2e |
+| `postgres`, `psql`, `sqlx` | postgresql 18, sqlx-cli | plus the `pg-*` helpers below |
+
+### Postgres
+
+A throwaway cluster lives in `./.pg` (gitignored) on port 5433, socket in the
+checkout, trust auth — nothing touches a system-wide Postgres.
+
+```bash
+pg-start    # initdb on first run, start, create the `goodie` database
+pg-stop
+pg-reset    # delete the cluster entirely
+```
+
+`DATABASE_URL` is exported in the shell and points at that cluster.
+
+### Bumping wasm-bindgen
+
+The CLI and the crate share a schema version and refuse to work across a
+mismatch, so they move together:
+
+1. pick a `wasm-bindgen-cli_0_2_*` attribute in `flake.nix`
+2. set the same version in `Cargo.toml` (`wasm-bindgen = { version = "=0.2.x" }`)
+   and run `cargo update`
+
+The dev shell prints a warning if `Cargo.lock` and the CLI drift apart.
