@@ -133,3 +133,34 @@ mismatch, so they move together:
    and run `cargo update`
 
 The dev shell prints a warning if `Cargo.lock` and the CLI drift apart.
+
+## Styling (Tailwind CSS v4)
+
+`style/tailwind.css` is the only stylesheet entrypoint:
+
+```css
+@import "tailwindcss";
+@source "../src/**/*.rs";
+```
+
+`Cargo.toml` points cargo-leptos at it with `tailwind-input-file = "style/tailwind.css"`,
+and cargo-leptos runs the pinned `tailwindcss` binary, pipes the result through
+Lightning CSS and writes `target/site/pkg/goodie-never-deliver.css` — the file
+`<Stylesheet id="leptos" .../>` in `src/app.rs` already links. `cargo leptos watch`
+rebuilds the CSS when a `.rs` file changes, so new classes show up on save.
+
+Notes:
+
+- **No `tailwind.config.js`.** v4 is configured in CSS: `@theme` for design tokens,
+  `@plugin "..."` for plugins, `@source` for extra scan paths. cargo-leptos only
+  falls back to writing a v3-style JS config when it thinks Tailwind is v3 — which
+  is why the dev shell exports `LEPTOS_TAILWIND_VERSION` with a `v` prefix.
+- **Conditional classes.** `class:animate-pulse=move || { count.get() > 4 }` works,
+  but keep the braces — a bare `>` inside an attribute value terminates the tag as
+  far as the `view!` macro is concerned. `class=("animate-pulse", signal)` is the
+  alternative for dynamic names.
+- **Plugins** (`@tailwindcss/forms`, `@tailwindcss/typography`) come from npm:
+  `npm i -D @tailwindcss/forms`, then `@plugin "@tailwindcss/forms";` in
+  `style/tailwind.css`. That is what `nodejs` is in the shell for.
+- Sass is still available if you want it: add `style-file = "style/main.scss"` back
+  and cargo-leptos will compile it and concatenate it *before* the Tailwind output.

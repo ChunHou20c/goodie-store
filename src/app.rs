@@ -16,7 +16,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <HydrationScripts options/>
                 <MetaTags/>
             </head>
-            <body>
+            <body class="min-h-screen bg-slate-50 text-slate-900">
                 <App/>
             </body>
         </html>
@@ -55,7 +55,18 @@ fn HomePage() -> impl IntoView {
     let on_click = move |_| *count.write() += 1;
 
     view! {
-        <h1>"Welcome to Leptos!"</h1>
-        <button on:click=on_click>"Click Me: " {count}</button>
+        <div class="mx-auto flex max-w-md flex-col items-center gap-4 p-8">
+            <h1 class="text-3xl font-bold tracking-tight">"Welcome to Leptos!"</h1>
+            <button
+                class="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-500"
+                // note the braces: a bare `>` inside an attribute value would
+                // close the tag as far as the view! macro is concerned
+                class:animate-pulse=move || { count.get() > 4 }
+                on:click=on_click
+            >
+                "Click Me: "
+                {count}
+            </button>
+        </div>
     }
 }

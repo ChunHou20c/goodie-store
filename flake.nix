@@ -124,11 +124,15 @@
             PGPORT = "5433";
             PGUSER = "postgres";
             PGDATABASE = "goodie";
-            # Keep cargo-leptos from phoning home to the GitHub release API to
-            # check for newer tool versions; the versions here are the nix ones.
-            LEPTOS_TAILWIND_VERSION = pkgs.tailwindcss_4.version;
+            # Tell cargo-leptos which versions it is looking at: it skips the
+            # GitHub release check, and — for Tailwind — the "v4" prefix is what
+            # switches it to CSS-first config (no tailwind.config.js is written
+            # or passed with --config). Formats must match cargo-leptos's own
+            # defaults, hence the `v` and `version_` prefixes.
+            LEPTOS_TAILWIND_VERSION = "v${pkgs.tailwindcss_4.version}";
             LEPTOS_SASS_VERSION = pkgs.dart-sass.version;
             LEPTOS_WASM_OPT_VERSION = "version_${pkgs.binaryen.version}";
+            LEPTOS_WASM_BINDGEN_VERSION = wasmBindgen.version;
           };
 
           shellHook = ''

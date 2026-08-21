@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* cargo-leptos runs `tailwindcss --input style/tailwind.css` from the crate
+   root; @source paths are relative to this file. Being explicit keeps the
+   class scan deterministic instead of relying on auto-detection. */
+@source "../src/**/*.rs";
