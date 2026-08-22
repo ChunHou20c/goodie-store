@@ -11,10 +11,13 @@ use leptos_router::components::{Route, Router, Routes, A};
 use leptos_router::hooks::use_location;
 use leptos_router::{ParamSegment, StaticSegment};
 
+use crate::auth::Auth;
 use crate::catalog::{money, Catalog, Product};
-use crate::screens::{BagScreen, HomeScreen, ProductScreen, SearchScreen};
+use crate::screens::{
+    AdminScreen, BagScreen, HomeScreen, LoginScreen, ProductScreen, SearchScreen,
+};
 use crate::shop::Shop;
-use crate::ui::{IconBack, IconBag, IconBookmark, IconSearch};
+use crate::ui::{IconBack, IconBag, IconBookmark, IconSearch, IconUser};
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -44,6 +47,8 @@ enum Screen {
     /// A product page, by slug; the row itself comes from the catalogue.
     Product(String),
     Bag,
+    Login,
+    Admin,
     Unknown,
 }
 
@@ -52,6 +57,8 @@ fn screen_of(path: &str) -> Screen {
         "" => Screen::Home,
         "/search" => Screen::Search,
         "/bag" => Screen::Bag,
+        "/login" => Screen::Login,
+        "/admin" => Screen::Admin,
         other => other
             .strip_prefix("/p/")
             .map(|slug| Screen::Product(slug.to_string()))
@@ -71,6 +78,7 @@ pub fn App() -> impl IntoView {
     // One blocking resource for the catalogue: resolved during SSR, serialized
     // into the response, and read from there on the client.
     provide_context(Catalog::load());
+    provide_context(Auth::load());
 
     view! {
         <Stylesheet id="leptos" href="/pkg/goodie-never-deliver.css" />
@@ -85,6 +93,8 @@ pub fn App() -> impl IntoView {
                         <Route path=StaticSegment("search") view=SearchScreen />
                         <Route path=(StaticSegment("p"), ParamSegment("id")) view=ProductScreen />
                         <Route path=StaticSegment("bag") view=BagScreen />
+                        <Route path=StaticSegment("login") view=LoginScreen />
+                        <Route path=StaticSegment("admin") view=AdminScreen />
                     </Routes>
                 </main>
                 <div class="sticky bottom-0 z-20 bg-ground">
@@ -100,6 +110,7 @@ pub fn App() -> impl IntoView {
 #[component]
 fn TopBar() -> impl IntoView {
     let shop = Shop::from_context();
+    let auth = Auth::from_context();
     let screen = use_screen();
 
     view! {
@@ -128,6 +139,53 @@ fn TopBar() -> impl IntoView {
                         .into_any()
                 }
             }} <div class="flex items-center gap-3.5">
+                // Signed out this is the Lucide user glyph; signed in it becomes
+                // the same accent square the bag badge uses, carrying an initial.
+                <Suspense fallback=|| {
+                    view! {
+                        <A
+                            href="/login"
+                            {..}
+                            class="flex text-ink hover:text-accent"
+                            aria-label="Sign in"
+                        >
+                            <IconUser />
+                        </A>
+                    }
+                }>
+                    {move || {
+                        match auth.with(|user| user.map(|u| u.initial())) {
+                            Some(initial) => {
+                                view! {
+                                    <A
+                                        href="/login"
+                                        {..}
+                                        class="flex text-ink no-underline hover:text-accent"
+                                        aria-label="Account"
+                                    >
+                                        <span class="flex h-[18px] min-w-[18px] items-center justify-center bg-accent px-1 text-[11px] font-extrabold text-ground">
+                                            {initial}
+                                        </span>
+                                    </A>
+                                }
+                                    .into_any()
+                            }
+                            None => {
+                                view! {
+                                    <A
+                                        href="/login"
+                                        {..}
+                                        class="flex text-ink hover:text-accent"
+                                        aria-label="Sign in"
+                                    >
+                                        <IconUser />
+                                    </A>
+                                }
+                                    .into_any()
+                            }
+                        }
+                    }}
+                </Suspense>
                 <A href="/search" {..} class="flex text-ink hover:text-accent" aria-label="Search">
                     <IconSearch />
                 </A>

@@ -157,6 +157,24 @@ pub fn IconSort(#[prop(default = 15)] size: u32) -> impl IntoView {
 }
 
 #[component]
+pub fn IconUser(#[prop(default = 20)] size: u32) -> impl IntoView {
+    view! {
+        <svg
+            width=size
+            height=size
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            aria-hidden="true"
+        >
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+        </svg>
+    }
+}
+
+#[component]
 pub fn IconBookmark(#[prop(default = 20)] size: u32) -> impl IntoView {
     view! {
         <svg

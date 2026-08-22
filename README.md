@@ -83,9 +83,9 @@ design* Claude Design project, on its **Modernist** design system.
 
 ### What is server state and what is not
 
-The catalogue is the one thing that comes from Postgres. The bag, the saved
-list, the query, the chips and the sort all live in the tab — they never reach
-the server, and reloading the page empties them.
+The catalogue and your account come from Postgres. The bag, the saved list, the
+query, the chips and the sort all live in the tab — they never reach the server,
+and reloading the page empties them.
 
 `list_products` is a Leptos server function behind a **blocking resource**, so
 it resolves during SSR, is serialized into the HTML, and is read straight out of
@@ -169,12 +169,17 @@ add them with `sqlx migrate add -r <description>`, which writes a `.up.sql` and 
 
 Seed data is **committed**, not fetched at boot:
 
-- `seed/dummyjson-products.json` — 194 products from
+- `seed/dummyjson-products.json` — all 194 products from
   [dummyjson.com/products](https://dummyjson.com/products), verbatim.
-- `migrations/0002_seed_products.sql` — the insert statements, generated from
-  that file by `scripts/generate-seed-sql.py`. Edit the payload or the
-  generator, never the SQL. The inserts end in `on conflict (id) do nothing`, so
-  applying them twice is safe.
+- `migrations/0002_seed_products.sql` — insert statements for the **first 20**
+  of them, generated from that file by `scripts/generate-seed-sql.py`. Edit the
+  payload or the generator, never the SQL. The inserts end in
+  `on conflict (id) do nothing`, so applying them twice is safe.
+
+A fresh database therefore starts with a browsable shelf of 20, and the
+remaining 174 are pulled in from the [admin console](#importing-products-admin-only)
+— which is the point of having an importer at all. Change `SEED_LIMIT` in the
+generator and re-run it if you want a fuller starting catalogue.
 
 To refresh it:
 
@@ -184,7 +189,7 @@ sku,weight,dimensions,warrantyInformation,shippingInformation,availabilityStatus
 returnPolicy,minimumOrderQuantity,tags,thumbnail,images
 curl -s "https://dummyjson.com/products?limit=0&select=$FIELDS" \
     -o seed/dummyjson-products.json
-python3 scripts/generate-seed-sql.py
+python3 scripts/generate-seed-sql.py     # writes the first SEED_LIMIT rows
 pg-reset && pg-start          # the seed migration's checksum has changed
 cargo leptos watch
 ```
@@ -192,9 +197,10 @@ cargo leptos watch
 That last step is the checksum rule above: regenerating `0002` after it has been
 applied invalidates it, so the database has to start clean.
 
-The seed brings real categories (24 of them), prices from $0.79 to $36,999.99,
-availability and product photography, so the chip row, the empty states and the
-price sort all exercise real data.
+Even at 20 rows the seed brings real categories (beauty, fragrances, furniture,
+groceries), prices from $1.99 to $2,499.99, mixed availability and product
+photography, so the chip row, the empty states and the price sort all exercise
+real data. Importing the rest widens that to 24 categories and $0.79–$36,999.99.
 
 Three deliberate departures from the prototype:
 
@@ -215,6 +221,79 @@ The toast is anchored just above the bottom chrome rather than the design's flat
 96px, which landed it on top of the button it reports on. The product page's
 "From Issue 14" panel only appears when a row has a `note`; nothing in the seed
 writes one.
+
+## Accounts and the admin console
+
+Two roles, `user` and `admin` (a Postgres enum), in `users`; sessions in
+`sessions`. Both arrive with `migrations/0003_create_users.sql`.
+
+### How a session works
+
+Signing in mints 32 random bytes, base64url-encoded, and returns them in a
+cookie:
+
+```
+kessel_session=<token>; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000
+```
+
+The database stores only `sha256(token)`, so a dump of `sessions` cannot be
+replayed as a live login. `SameSite=Lax` also keeps the cookie off cross-site
+POSTs, which is the CSRF story for now. Set `APP_SECURE_COOKIES=1` in production
+to add `Secure` (it is off by default so plain-http localhost works).
+
+Passwords are argon2id with the crate's default parameters. A wrong email and a
+wrong password give the same message, so the form does not confirm who has an
+account.
+
+`leptos_axum` puts the request `Parts` and `ResponseOptions` in context for both
+page renders and server-function calls, so `src/auth.rs` reads and writes that
+cookie the same way in either — there is no axum middleware in the path.
+
+### Server functions
+
+| Endpoint | Who | Does |
+| --- | --- | --- |
+| `POST /api/sign_up` | anyone | creates a `user`, opens a session |
+| `POST /api/sign_in` | anyone | opens a session |
+| `POST /api/sign_out` | anyone | deletes the session row, clears the cookie |
+| `POST /api/current_user` | anyone | the signed-in user, or none |
+| `POST /api/import_products` | **admin only** | pulls products from dummyjson into the database |
+
+`/login` is also the account screen: signed in it shows who you are, a sign-out
+button, and — for admins — the link to `/admin`.
+
+### The first admin
+
+If `ADMIN_EMAIL` and `ADMIN_PASSWORD` are both set, the server upserts that
+account as an admin on startup; unset, it skips the step and says so in the log.
+The dev shell exports throwaway values (`admin@kessel.test`), so `pg-reset`
+always leaves you with a working admin. Set real ones in production, or omit them
+and promote an account by hand.
+
+### Importing products (admin only)
+
+`/admin` fetches a slice of the upstream catalogue **server-side** — the browser
+never talks to dummyjson — and upserts it:
+
+- rows are matched on the upstream id, so re-running a range refreshes rather
+  than duplicates, and the report distinguishes inserted from refreshed;
+- `note` is never overwritten: it is editorial, and ours;
+- `limit` is clamped to 100; slug collisions take the product id as a suffix.
+
+Authorization is `require_admin()` inside the server function. Hiding `/admin`
+from the nav is presentation, not a control — a signed-out or non-admin `POST`
+to the endpoint is refused on its own merits.
+
+The upstream→row mapping now exists twice: in Rust (`src/catalog.rs`, canonical)
+and in Python (`scripts/generate-seed-sql.py`, only for regenerating the offline
+seed). `cargo test` replays the committed payload through the Rust path and
+compares it against what the generator wrote, so the two cannot drift silently.
+
+### Not done yet
+
+Password reset, email verification, rate limiting on sign-in, and a sweeper for
+expired sessions (they stop authenticating on time, but the rows stay). User
+management and an activity log are the next admin slices.
 
 ## Styling (Tailwind CSS v4)
 

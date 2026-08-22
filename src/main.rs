@@ -31,6 +31,14 @@ async fn main() {
         .expect("migrations failed");
     log!("catalogue ready at {database_url}");
 
+    // Creates or updates the admin named by ADMIN_EMAIL / ADMIN_PASSWORD; does
+    // nothing when they are unset, so production can opt out entirely.
+    match goodie_never_deliver::auth::bootstrap_admin(&pool).await {
+        Ok(Some(email)) => log!("admin account ready: {email}"),
+        Ok(None) => log!("no ADMIN_EMAIL / ADMIN_PASSWORD set — skipping admin bootstrap"),
+        Err(e) => panic!("admin bootstrap failed: {e}"),
+    }
+
     // Server functions need the pool in context twice over: once for the
     // renderer, which calls them directly during SSR, and once for the POST
     // handler the hydrated client talks to.

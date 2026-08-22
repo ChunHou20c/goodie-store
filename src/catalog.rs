@@ -249,6 +249,415 @@ impl Catalog {
     pub fn take(&self, n: usize) -> Vec<Product> {
         self.with(|products| products.iter().take(n).cloned().collect())
     }
+
+    /// Re-read the catalogue — the admin console calls this after an import.
+    pub fn refetch(&self) {
+        self.resource.refetch();
+    }
+}
+
+/// What one run of [`import_products`] did.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportReport {
+    pub fetched: usize,
+    pub inserted: usize,
+    pub updated: usize,
+    /// `total` as reported by the upstream API.
+    pub total_available: usize,
+}
+
+impl ImportReport {
+    pub fn summary(&self) -> String {
+        format!(
+            "{} imported, {} refreshed — {} available upstream",
+            self.inserted, self.updated, self.total_available
+        )
+    }
+}
+
+/// Pull a slice of the upstream catalogue into `products`. **Admin only.**
+///
+/// The browser never talks to dummyjson: the server fetches, maps and upserts,
+/// and only for an admin. Re-running the same range is idempotent — rows are
+/// matched on the upstream id and refreshed, and `note` is left alone because it
+/// is ours, not theirs.
+#[server(endpoint = "import_products")]
+pub async fn import_products(limit: u32, skip: u32) -> Result<ImportReport, ServerFnError> {
+    use crate::auth::require_admin;
+
+    require_admin().await?;
+
+    let pool = expect_context::<sqlx::PgPool>();
+    let limit = limit.clamp(1, 100);
+    let payload = self::import::fetch(limit, skip).await?;
+
+    let mut report = ImportReport {
+        fetched: payload.products.len(),
+        total_available: payload.total,
+        ..Default::default()
+    };
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| ServerFnError::new(format!("import failed to start: {e}")))?;
+
+    let mut claimed: Vec<String> = Vec::with_capacity(payload.products.len());
+    for api in &payload.products {
+        let row = self::import::to_row(api);
+        let slug = self::import::free_slug(&mut tx, &row, &claimed).await?;
+        claimed.push(slug.clone());
+
+        if self::import::upsert(&mut tx, &row, &slug).await? {
+            report.inserted += 1;
+        } else {
+            report.updated += 1;
+        }
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| ServerFnError::new(format!("import failed to commit: {e}")))?;
+
+    Ok(report)
+}
+
+/// Fetching and mapping the upstream payload.
+///
+/// This mapping is the canonical one. `scripts/generate-seed-sql.py` expresses
+/// the same rules in Python purely to regenerate the committed offline seed;
+/// `mapping_matches_the_committed_seed` below is the guard that they agree.
+#[cfg(feature = "ssr")]
+mod import {
+    use super::*;
+    use serde::Deserialize;
+    use sqlx::{Postgres, Transaction};
+    use std::time::Duration;
+
+    /// Only the fields we store.
+    const SELECT: &str = "id,title,description,category,price,discountPercentage,rating,stock,\
+brand,sku,weight,dimensions,warrantyInformation,shippingInformation,availabilityStatus,\
+returnPolicy,minimumOrderQuantity,tags,thumbnail";
+
+    #[derive(Debug, Deserialize)]
+    pub struct ApiPayload {
+        pub products: Vec<ApiProduct>,
+        pub total: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ApiProduct {
+        pub id: i32,
+        pub title: String,
+        #[serde(default)]
+        pub description: Option<String>,
+        pub category: String,
+        pub price: f64,
+        #[serde(default)]
+        pub discount_percentage: Option<f32>,
+        #[serde(default)]
+        pub rating: Option<f32>,
+        #[serde(default)]
+        pub stock: Option<i32>,
+        #[serde(default)]
+        pub brand: Option<String>,
+        #[serde(default)]
+        pub sku: Option<String>,
+        #[serde(default)]
+        pub weight: Option<f32>,
+        #[serde(default)]
+        pub dimensions: Option<ApiDimensions>,
+        #[serde(default)]
+        pub warranty_information: Option<String>,
+        #[serde(default)]
+        pub shipping_information: Option<String>,
+        #[serde(default)]
+        pub availability_status: Option<String>,
+        #[serde(default)]
+        pub return_policy: Option<String>,
+        #[serde(default)]
+        pub minimum_order_quantity: Option<i32>,
+        #[serde(default)]
+        pub tags: Vec<String>,
+        #[serde(default)]
+        pub thumbnail: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct ApiDimensions {
+        pub width: Option<f32>,
+        pub height: Option<f32>,
+        pub depth: Option<f32>,
+    }
+
+    /// A `products` row, ready to bind.
+    #[derive(Debug, PartialEq)]
+    pub struct Row {
+        pub id: i32,
+        pub slug: String,
+        pub title: String,
+        pub category: String,
+        pub description: String,
+        pub price_cents: i32,
+        pub discount_pct: f32,
+        pub rating: Option<f32>,
+        pub stock: i32,
+        pub availability: String,
+        pub brand: Option<String>,
+        pub sku: Option<String>,
+        pub weight_grams: Option<i32>,
+        pub width_mm: Option<f32>,
+        pub height_mm: Option<f32>,
+        pub depth_mm: Option<f32>,
+        pub warranty: Option<String>,
+        pub shipping: Option<String>,
+        pub return_policy: Option<String>,
+        pub min_order: Option<i32>,
+        pub thumbnail_url: Option<String>,
+        pub tags: Vec<String>,
+    }
+
+    pub fn slugify(title: &str) -> String {
+        let mut slug = String::with_capacity(title.len());
+        for c in title.to_lowercase().chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c);
+            } else if !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+        let slug = slug.trim_matches('-').to_string();
+        if slug.is_empty() {
+            "product".to_string()
+        } else {
+            slug
+        }
+    }
+
+    pub fn to_row(api: &ApiProduct) -> Row {
+        let dims = api.dimensions.as_ref();
+        Row {
+            id: api.id,
+            slug: slugify(&api.title),
+            title: api.title.clone(),
+            category: api.category.clone(),
+            description: api.description.clone().unwrap_or_default(),
+            price_cents: (api.price * 100.0).round() as i32,
+            discount_pct: api.discount_percentage.unwrap_or(0.0),
+            rating: api.rating,
+            stock: api.stock.unwrap_or(0),
+            availability: api
+                .availability_status
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string()),
+            brand: api.brand.clone(),
+            sku: api.sku.clone(),
+            weight_grams: api.weight.map(|w| w.round() as i32),
+            width_mm: dims.and_then(|d| d.width),
+            height_mm: dims.and_then(|d| d.height),
+            depth_mm: dims.and_then(|d| d.depth),
+            warranty: api.warranty_information.clone(),
+            shipping: api.shipping_information.clone(),
+            return_policy: api.return_policy.clone(),
+            min_order: api.minimum_order_quantity,
+            thumbnail_url: api.thumbnail.clone(),
+            tags: api.tags.clone(),
+        }
+    }
+
+    pub async fn fetch(limit: u32, skip: u32) -> Result<ApiPayload, ServerFnError> {
+        let url =
+            format!("https://dummyjson.com/products?limit={limit}&skip={skip}&select={SELECT}");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| ServerFnError::new(format!("could not build an http client: {e}")))?;
+
+        client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| ServerFnError::new(format!("upstream request failed: {e}")))?
+            .error_for_status()
+            .map_err(|e| ServerFnError::new(format!("upstream returned an error: {e}")))?
+            .json::<ApiPayload>()
+            .await
+            .map_err(|e| ServerFnError::new(format!("could not read the upstream payload: {e}")))
+    }
+
+    /// `slug` is unique, so resolve collisions before inserting rather than
+    /// letting a constraint abort the transaction. A clash with a *different*
+    /// product — upstream or earlier in this batch — takes the id as a suffix.
+    pub async fn free_slug(
+        tx: &mut Transaction<'_, Postgres>,
+        row: &Row,
+        claimed: &[String],
+    ) -> Result<String, ServerFnError> {
+        let taken_here = claimed.contains(&row.slug);
+        let taken_in_db: Option<(i32,)> =
+            sqlx::query_as("select id from products where slug = $1 and id <> $2")
+                .bind(&row.slug)
+                .bind(row.id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(|e| ServerFnError::new(format!("slug lookup failed: {e}")))?;
+
+        Ok(if taken_here || taken_in_db.is_some() {
+            format!("{}-{}", row.slug, row.id)
+        } else {
+            row.slug.clone()
+        })
+    }
+
+    /// Returns true when the row was inserted, false when it was refreshed.
+    /// `xmax = 0` is the standard way to tell those apart in an upsert.
+    pub async fn upsert(
+        tx: &mut Transaction<'_, Postgres>,
+        row: &Row,
+        slug: &str,
+    ) -> Result<bool, ServerFnError> {
+        let (inserted,): (bool,) = sqlx::query_as(
+            "insert into products (id, slug, title, category, description, price_cents, \
+             discount_pct, rating, stock, availability, brand, sku, weight_grams, width_mm, \
+             height_mm, depth_mm, warranty, shipping, return_policy, min_order, thumbnail_url, tags) \
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, \
+             $18, $19, $20, $21, $22) \
+             on conflict (id) do update set \
+             slug = excluded.slug, title = excluded.title, category = excluded.category, \
+             description = excluded.description, price_cents = excluded.price_cents, \
+             discount_pct = excluded.discount_pct, rating = excluded.rating, \
+             stock = excluded.stock, availability = excluded.availability, \
+             brand = excluded.brand, sku = excluded.sku, weight_grams = excluded.weight_grams, \
+             width_mm = excluded.width_mm, height_mm = excluded.height_mm, \
+             depth_mm = excluded.depth_mm, warranty = excluded.warranty, \
+             shipping = excluded.shipping, return_policy = excluded.return_policy, \
+             min_order = excluded.min_order, thumbnail_url = excluded.thumbnail_url, \
+             tags = excluded.tags, updated_at = now() \
+             returning (xmax = 0) as inserted",
+        )
+        .bind(row.id)
+        .bind(slug)
+        .bind(&row.title)
+        .bind(&row.category)
+        .bind(&row.description)
+        .bind(row.price_cents)
+        .bind(row.discount_pct)
+        .bind(row.rating)
+        .bind(row.stock)
+        .bind(&row.availability)
+        .bind(&row.brand)
+        .bind(&row.sku)
+        .bind(row.weight_grams)
+        .bind(row.width_mm)
+        .bind(row.height_mm)
+        .bind(row.depth_mm)
+        .bind(&row.warranty)
+        .bind(&row.shipping)
+        .bind(&row.return_policy)
+        .bind(row.min_order)
+        .bind(&row.thumbnail_url)
+        .bind(&row.tags)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| ServerFnError::new(format!("upsert failed for id {}: {e}", row.id)))?;
+
+        Ok(inserted)
+    }
+}
+
+/// Guards the one duplicated rule in the project: the upstream→row mapping is
+/// written in Rust here and in Python in `scripts/generate-seed-sql.py`. These
+/// tests replay the committed payload through the Rust path and check it against
+/// what the Python generator actually wrote into `0002_seed_products.sql`.
+#[cfg(all(test, feature = "ssr"))]
+mod import_tests {
+    use super::import::{slugify, to_row, ApiPayload};
+
+    fn seed_payload() -> ApiPayload {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/seed/dummyjson-products.json");
+        let json = std::fs::read_to_string(path).expect("committed seed payload");
+        serde_json::from_str(&json).expect("payload parses into the importer's shape")
+    }
+
+    /// `(id, slug)` pairs as the generator wrote them.
+    fn seeded_slugs() -> Vec<(i32, String)> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/migrations/0002_seed_products.sql"
+        );
+        let sql = std::fs::read_to_string(path).expect("generated seed sql");
+        sql.lines()
+            .filter_map(|line| {
+                let line = line.trim().strip_prefix('(')?;
+                let (id, rest) = line.split_once(", '")?;
+                let (slug, _) = rest.split_once('\'')?;
+                Some((id.parse().ok()?, slug.to_string()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn slugs_match_the_generated_seed() {
+        let payload = seed_payload();
+        let seeded = seeded_slugs();
+        // The seed is a prefix of the payload — the rest arrives through the
+        // admin import — so compare pairwise and let `zip` stop at the shorter.
+        assert!(!seeded.is_empty(), "parsed the seeded rows");
+        assert!(seeded.len() <= payload.products.len());
+
+        // Same rule `free_slug` applies within a batch: the base slug, or the
+        // base plus the product id when something else already claimed it.
+        let mut claimed: Vec<String> = Vec::new();
+        for (api, (id, slug)) in payload.products.iter().zip(seeded) {
+            assert_eq!(api.id, id, "seed order follows the payload");
+
+            let base = slugify(&api.title);
+            let expected = if claimed.contains(&base) {
+                format!("{base}-{}", api.id)
+            } else {
+                base
+            };
+            claimed.push(expected.clone());
+            assert_eq!(expected, slug, "slug rule agrees for id {id}");
+        }
+    }
+
+    #[test]
+    fn maps_money_and_units_like_the_generator() {
+        let payload = seed_payload();
+        let first = to_row(&payload.products[0]);
+
+        assert_eq!(first.id, 1);
+        assert_eq!(first.slug, "essence-mascara-lash-princess");
+        assert_eq!(first.price_cents, 999, "$9.99 stored as cents");
+        assert_eq!(first.availability, "In Stock");
+        assert_eq!(first.weight_grams, Some(4));
+        assert_eq!(first.sku.as_deref(), Some("BEA-ESS-ESS-001"));
+        assert_eq!(first.tags, vec!["beauty", "mascara"]);
+        assert!(first.thumbnail_url.is_some());
+
+        // Every row must satisfy the table's constraints.
+        for api in &payload.products {
+            let row = to_row(api);
+            assert!(
+                row.price_cents >= 0,
+                "price_cents check constraint, id {}",
+                row.id
+            );
+            assert!(!row.slug.is_empty());
+            assert!(!row.availability.is_empty());
+        }
+    }
+
+    #[test]
+    fn slugify_handles_awkward_titles() {
+        assert_eq!(slugify("Calvin Klein CK One"), "calvin-klein-ck-one");
+        assert_eq!(slugify("  Spaced   Out  "), "spaced-out");
+        assert_eq!(slugify("Symbols !@#$ Only"), "symbols-only");
+        assert_eq!(slugify("!!!"), "product");
+        assert_eq!(slugify(""), "product");
+    }
 }
 
 #[cfg(test)]
