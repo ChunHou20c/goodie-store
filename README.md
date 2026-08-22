@@ -121,7 +121,8 @@ pg-stop
 pg-reset    # delete the cluster entirely
 ```
 
-`DATABASE_URL` is exported in the shell and points at that cluster.
+`DATABASE_URL` is exported in the shell and points at that cluster; the app
+migrates and seeds it on startup (see [The database](#the-database)).
 
 ### Bumping wasm-bindgen
 
@@ -146,16 +147,62 @@ design* Claude Design project, on its **Modernist** design system.
 | `/p/:id` | Photograph, price, spec table, the desk's note |
 | `/bag` | Lines with steppers, totals, checkout |
 
-- `src/catalog.rs` — the six objects, the chip predicates and the search. Static
-  today; this is the shape the Postgres-backed catalogue will return.
+- `src/catalog.rs` — the `Product` row, the `list_products` server function, the
+  chip predicates and the search. The only part of the app that talks to the
+  database.
 - `src/shop.rs` — bag, saved list, search controls and the toast, in one struct
-  provided through context.
+  provided through context. Holds product ids and nothing else.
 - `src/app.rs` — the shell: top bar, sticky action, bottom tabs. All of the
   chrome is derived from the route, not from a screen flag.
-- `src/screens/`, `src/ui.rs` — one file per screen; the Lucide icon set and the
-  photo slot.
+- `src/screens/`, `src/ui.rs` — one file per screen; the Lucide icon set, the
+  photo slot and the `WithCatalog` suspense gate.
 
-Two deliberate departures from the prototype:
+### What is server state and what is not
+
+The catalogue is the one thing that comes from Postgres. The bag, the saved
+list, the query, the chips and the sort all live in the tab — they never reach
+the server, and reloading the page empties them.
+
+`list_products` is a Leptos server function behind a **blocking resource**, so
+it resolves during SSR, is serialized into the HTML, and is read straight out of
+that when the client hydrates. Screens then filter and sort the loaded rows in
+the browser, and client-side navigation between the four screens costs no
+further requests. It is one query per page load and 194 rows on the wire — fine
+at this size, and the place to add server-side search and pagination when the
+catalogue outgrows it. The same function is also exposed at
+`POST /api/list_products` for the hydrated client.
+
+## The database
+
+Postgres holds `products` (see `migrations/0001_create_products.sql`): money as
+integer cents, one row per object, a unique `slug` that is also the URL segment
+at `/p/:slug`, and a nullable `note` for the buying desk's editorial.
+
+Migrations run at startup, so a fresh cluster needs nothing but the dev shell:
+
+```bash
+pg-start                # initdb, start, create `goodie`
+cargo leptos watch      # migrates, seeds, serves
+```
+
+Seed data is **committed**, not fetched at boot:
+
+- `seed/dummyjson-products.json` — 194 products from
+  [dummyjson.com/products](https://dummyjson.com/products), verbatim.
+- `migrations/0002_seed_products.sql` — the insert statements, generated from
+  that file by `scripts/generate-seed-sql.py`. Edit the payload or the
+  generator, never the SQL.
+
+```bash
+python3 scripts/generate-seed-sql.py    # regenerate after changing the payload
+sqlx migrate run                        # or just restart the app
+```
+
+The seed brings real categories (24 of them), prices from $0.79 to $36,999.99,
+availability and product photography, so the chip row, the empty states and the
+price sort all exercise real data.
+
+Three deliberate departures from the prototype:
 
 - The prototype switches screens in local state; here each screen is a **real
   route**, so a product is linkable, the back button works and the four screens
@@ -164,8 +211,16 @@ Two deliberate departures from the prototype:
   puts something in your bag on first load would be wrong, and the empty state
   is part of the design anyway.
 
+- The prototype's six hand-written objects are replaced by the seeded
+  catalogue, so the chip row is now every category the data has (sorted by how
+  many products carry it) followed by "Under $400" and "In stock". Chips are
+  still ANDed, as in the prototype — two categories at once find nothing, and
+  the empty state offers the way back out.
+
 The toast is anchored just above the bottom chrome rather than the design's flat
-96px, which landed it on top of the button it reports on.
+96px, which landed it on top of the button it reports on. The product page's
+"From Issue 14" panel only appears when a row has a `note`; nothing in the seed
+writes one.
 
 ## Styling (Tailwind CSS v4)
 

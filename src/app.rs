@@ -11,7 +11,7 @@ use leptos_router::components::{Route, Router, Routes, A};
 use leptos_router::hooks::use_location;
 use leptos_router::{ParamSegment, StaticSegment};
 
-use crate::catalog::{self, money, Product};
+use crate::catalog::{money, Catalog, Product};
 use crate::screens::{BagScreen, HomeScreen, ProductScreen, SearchScreen};
 use crate::shop::Shop;
 use crate::ui::{IconBack, IconBag, IconBookmark, IconSearch};
@@ -37,11 +37,12 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 
 /// Which of the four screens the current path is on. The chrome — back label,
 /// sticky action, active tab — is derived from this rather than from state.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Screen {
     Home,
     Search,
-    Product(&'static Product),
+    /// A product page, by slug; the row itself comes from the catalogue.
+    Product(String),
     Bag,
     Unknown,
 }
@@ -53,8 +54,7 @@ fn screen_of(path: &str) -> Screen {
         "/bag" => Screen::Bag,
         other => other
             .strip_prefix("/p/")
-            .and_then(catalog::find)
-            .map(Screen::Product)
+            .map(|slug| Screen::Product(slug.to_string()))
             .unwrap_or(Screen::Unknown),
     }
 }
@@ -68,6 +68,9 @@ fn use_screen() -> impl Fn() -> Screen + Copy {
 pub fn App() -> impl IntoView {
     provide_meta_context();
     provide_context(Shop::new());
+    // One blocking resource for the catalogue: resolved during SSR, serialized
+    // into the response, and read from there on the client.
+    provide_context(Catalog::load());
 
     view! {
         <Stylesheet id="leptos" href="/pkg/goodie-never-deliver.css" />
@@ -152,8 +155,13 @@ fn StickyAction() -> impl IntoView {
     let shop = Shop::from_context();
     let screen = use_screen();
 
-    move || match screen() {
-        Screen::Product(product) => view! { <ProductActions product /> }.into_any(),
+    let catalog = Catalog::from_context();
+
+    let action = move || match screen() {
+        Screen::Product(slug) => match catalog.by_slug(&slug) {
+            Some(product) => view! { <ProductActions product /> }.into_any(),
+            None => ().into_any(),
+        },
         Screen::Bag => view! {
             <Show when=move || { shop.count() > 0 }>
                 <div class="border-t-2 border-ink/40 bg-ground px-[18px] py-3">
@@ -162,20 +170,28 @@ fn StickyAction() -> impl IntoView {
                         on:click=move |_| shop.flash("Payment step — coming next".to_string())
                     >
                         "Checkout"
-                        <span>{move || money(shop.subtotal())}</span>
+                        <span>
+                            {move || catalog.with(|products| money(shop.subtotal(products)))}
+                        </span>
                     </button>
                 </div>
             </Show>
         }
         .into_any(),
         _ => ().into_any(),
-    }
+    };
+
+    // Both arms price themselves from the catalogue, so they read it inside a
+    // boundary like every other consumer.
+    view! { <Suspense fallback=|| ()>{action}</Suspense> }
 }
 
 #[component]
-fn ProductActions(product: &'static Product) -> impl IntoView {
+fn ProductActions(product: Product) -> impl IntoView {
     let shop = Shop::from_context();
-    let saved = move || shop.is_saved(product.id);
+    let id = product.id;
+    let price = product.price_label();
+    let saved = move || shop.is_saved(id);
 
     view! {
         <div class="flex gap-2.5 border-t-2 border-ink/40 bg-ground px-[18px] py-3">
@@ -189,16 +205,16 @@ fn ProductActions(product: &'static Product) -> impl IntoView {
                 }
                 aria-pressed=move || if saved() { "true" } else { "false" }
                 aria-label="Save for later"
-                on:click=move |_| shop.toggle_save(product.id)
+                on:click=move |_| shop.toggle_save(id)
             >
                 <IconBookmark />
             </button>
             <button
                 class="btn btn-primary flex-1 justify-between px-4 py-[15px]"
-                on:click=move |_| shop.add(product)
+                on:click=move |_| shop.add(&product)
             >
                 "Add to bag"
-                <span>{product.price_label()}</span>
+                <span>{price}</span>
             </button>
         </div>
     }

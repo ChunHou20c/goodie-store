@@ -1,9 +1,13 @@
 //! Client-side shop state: the bag, the saved list, the search controls and
 //! the toast. One struct in context so every screen reads the same signals.
+//!
+//! None of this touches the server — the bag lives in the tab until checkout
+//! exists. Product rows come from [`crate::catalog::Catalog`]; this module
+//! only ever holds product ids.
 
 use leptos::prelude::*;
 
-use crate::catalog::{self, Product};
+use crate::catalog::Product;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -34,13 +38,13 @@ impl Sort {
 #[derive(Clone, Copy)]
 pub struct Shop {
     /// (product id, quantity), in the order things were added.
-    cart: RwSignal<Vec<(&'static str, u32)>>,
-    saved: RwSignal<Vec<&'static str>>,
+    cart: RwSignal<Vec<(i32, u32)>>,
+    saved: RwSignal<Vec<i32>>,
     toast: RwSignal<Option<String>>,
     /// Bumped on every flash so a stale timer cannot clear a newer toast.
     toast_gen: RwSignal<u32>,
     pub query: RwSignal<String>,
-    pub filters: RwSignal<Vec<&'static str>>,
+    pub filters: RwSignal<Vec<String>>,
     pub sort: RwSignal<Sort>,
 }
 
@@ -73,24 +77,36 @@ impl Shop {
         self.cart.with(|c| c.iter().map(|(_, q)| q).sum())
     }
 
-    pub fn subtotal(&self) -> u32 {
+    /// Bag total in cents, priced from the catalogue rows passed in.
+    pub fn subtotal(&self, products: &[Product]) -> i32 {
         self.cart.with(|c| {
             c.iter()
-                .filter_map(|(id, q)| catalog::find(id).map(|p| p.price * q))
+                .filter_map(|(id, qty)| {
+                    products
+                        .iter()
+                        .find(|p| p.id == *id)
+                        .map(|p| p.price_cents * *qty as i32)
+                })
                 .sum()
         })
     }
 
-    pub fn lines(&self) -> Vec<(&'static Product, u32)> {
+    /// The bag as rows, dropping any line whose product left the catalogue.
+    pub fn lines(&self, products: &[Product]) -> Vec<(Product, u32)> {
         self.cart.with(|c| {
             c.iter()
-                .filter_map(|(id, q)| catalog::find(id).map(|p| (p, *q)))
+                .filter_map(|(id, qty)| {
+                    products
+                        .iter()
+                        .find(|p| p.id == *id)
+                        .map(|p| (p.clone(), *qty))
+                })
                 .collect()
         })
     }
 
     /// Add `delta` to a line, dropping it when the quantity reaches zero.
-    pub fn bump(&self, id: &'static str, delta: i32) {
+    pub fn bump(&self, id: i32, delta: i32) {
         self.cart.update(|c| {
             match c.iter_mut().find(|(i, _)| *i == id) {
                 Some(line) => line.1 = line.1.saturating_add_signed(delta),
@@ -101,22 +117,22 @@ impl Shop {
         });
     }
 
-    pub fn remove(&self, id: &'static str) {
+    pub fn remove(&self, id: i32) {
         self.cart.update(|c| c.retain(|(i, _)| *i != id));
     }
 
-    pub fn add(&self, p: &'static Product) {
-        self.bump(p.id, 1);
-        self.flash(format!("{} added", p.name));
+    pub fn add(&self, product: &Product) {
+        self.bump(product.id, 1);
+        self.flash(format!("{} added", product.title));
     }
 
     // ── saved list ─────────────────────────────────────────────────────────
 
-    pub fn is_saved(&self, id: &'static str) -> bool {
+    pub fn is_saved(&self, id: i32) -> bool {
         self.saved.with(|s| s.contains(&id))
     }
 
-    pub fn toggle_save(&self, id: &'static str) {
+    pub fn toggle_save(&self, id: i32) {
         self.saved
             .update(|s| match s.iter().position(|i| *i == id) {
                 Some(at) => {
@@ -135,14 +151,14 @@ impl Shop {
     /// Show a message for the length of the `toast` animation. A later flash
     /// wins: the earlier timer sees a bumped generation and does nothing.
     pub fn flash(&self, msg: String) {
-        let gen = self.toast_gen.get_untracked().wrapping_add(1);
-        self.toast_gen.set(gen);
+        let generation = self.toast_gen.get_untracked().wrapping_add(1);
+        self.toast_gen.set(generation);
         self.toast.set(Some(msg));
 
         let (toast, toast_gen) = (self.toast, self.toast_gen);
         set_timeout(
             move || {
-                if toast_gen.get_untracked() == gen {
+                if toast_gen.get_untracked() == generation {
                     toast.set(None);
                 }
             },
@@ -152,13 +168,17 @@ impl Shop {
 
     // ── search controls ────────────────────────────────────────────────────
 
-    pub fn toggle_filter(&self, chip: &'static str) {
+    pub fn is_filtered_by(&self, chip: &str) -> bool {
+        self.filters.with(|f| f.iter().any(|c| c == chip))
+    }
+
+    pub fn toggle_filter(&self, chip: &str) {
         self.filters
-            .update(|f| match f.iter().position(|c| *c == chip) {
+            .update(|f| match f.iter().position(|c| c == chip) {
                 Some(at) => {
                     f.remove(at);
                 }
-                None => f.push(chip),
+                None => f.push(chip.to_string()),
             });
     }
 
@@ -167,15 +187,16 @@ impl Shop {
         self.query.set(String::new());
     }
 
-    /// Filtered, then sorted by the current sort.
-    pub fn results(&self) -> Vec<&'static Product> {
-        let mut found = self
-            .query
-            .with(|q| self.filters.with(|f| catalog::search(q, f)));
+    /// The catalogue filtered by the query and chips, then sorted.
+    pub fn results<'a>(&self, products: &'a [Product]) -> Vec<&'a Product> {
+        let mut found = self.query.with(|q| {
+            self.filters
+                .with(|f| crate::catalog::search(products, q, f))
+        });
         match self.sort.get() {
             Sort::Index => {}
-            Sort::PriceLow => found.sort_by_key(|p| p.price),
-            Sort::PriceHigh => found.sort_by_key(|p| std::cmp::Reverse(p.price)),
+            Sort::PriceLow => found.sort_by_key(|p| p.price_cents),
+            Sort::PriceHigh => found.sort_by_key(|p| std::cmp::Reverse(p.price_cents)),
         }
         found
     }

@@ -139,7 +139,9 @@
             root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
             export PGDATA="$root/.pg/data"
             export PGHOST="$root/.pg"
-            export DATABASE_URL="postgres://$PGUSER@localhost:$PGPORT/$PGDATABASE?host=$PGHOST"
+            # TCP rather than the socket: psql picks up PGHOST on its own, and
+            # sqlx wants a URL it can parse without a host= parameter.
+            export DATABASE_URL="postgres://$PGUSER@127.0.0.1:$PGPORT/$PGDATABASE"
 
             lock_wb="$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p;q;}' \
               "$root/Cargo.lock" 2>/dev/null || true)"
