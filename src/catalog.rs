@@ -124,7 +124,7 @@ pub fn money(cents: i32) -> String {
     }
     out.push('$');
     for (i, c) in whole.chars().enumerate() {
-        if i > 0 && (whole.len() - i) % 3 == 0 {
+        if i > 0 && (whole.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -155,7 +155,7 @@ pub fn chips(products: &[Product]) -> Vec<String> {
 /// anything else is a category.
 fn chip_matches(chip: &str, p: &Product) -> bool {
     match chip {
-        UNDER_400 => p.price_cents < 400_00,
+        UNDER_400 => p.price_cents < 40_000, // $400.00 in cents
         IN_STOCK => p.in_stock(),
         category => p.category == category,
     }

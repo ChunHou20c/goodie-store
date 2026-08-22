@@ -23,16 +23,12 @@ pub fn HomeScreen() -> impl IntoView {
                 <h2 class="mb-2.5 text-[34px] leading-[1.03] tracking-[-0.025em]">
                     "The Quiet Machine"
                 </h2>
-                <p class="mb-3.5 text-[13.5px] leading-[1.6] text-ink/68 text-pretty">
+                <p class="mb-4 text-[13.5px] leading-[1.6] text-ink/68 text-pretty">
                     "The objects we keep coming back to — chosen for the way they sound, feel and age, not for the spec sheet."
                 </p>
             </div>
 
-            <div class="mb-1 h-[230px]">
-                <Photo label="Issue cover photo" />
-            </div>
-
-            <div class="border-b-2 border-ink/40 px-[18px] pt-2.5 pb-[18px]">
+            <div class="border-b-2 border-ink/40 px-[18px] pb-[18px]">
                 <A
                     href="/search"
                     {..}
