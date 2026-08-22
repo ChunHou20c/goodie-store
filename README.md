@@ -1,105 +1,29 @@
-<picture>
-    <source srcset="https://raw.githubusercontent.com/leptos-rs/leptos/main/docs/logos/Leptos_logo_Solid_White.svg" media="(prefers-color-scheme: dark)">
-    <img src="https://raw.githubusercontent.com/leptos-rs/leptos/main/docs/logos/Leptos_logo_RGB.svg" alt="Leptos Logo">
-</picture>
+# Kessel — `goodie-never-deliver`
 
-# Leptos Axum Starter Template
+A full-stack shop: [Leptos](https://github.com/leptos-rs/leptos) (SSR +
+hydration) on [Axum](https://github.com/tokio-rs/axum), styled with Tailwind CSS
+v4, with the product catalogue in Postgres. The four screens implement the
+*Kessel Shop* design on its Modernist design system — see
+[The app](#the-app--kessel-issue-14).
 
-This is a template for use with the [Leptos](https://github.com/leptos-rs/leptos) web framework and the [cargo-leptos](https://github.com/akesson/cargo-leptos) tool using [Axum](https://github.com/tokio-rs/axum).
+## Quick start
 
-## Creating your template repo
-
-If you don't have `cargo-leptos` installed you can install it with
-
-```bash
-cargo install cargo-leptos --locked
-```
-
-Then run
-```bash
-cargo leptos new --git https://github.com/leptos-rs/start-axum
-```
-
-to generate a new project template.
+Everything the project needs is pinned in `flake.nix`; there is nothing to
+`cargo install`, `npm install -g`, or `rustup add`.
 
 ```bash
-cd goodie-never-deliver
+nix develop           # or: direnv allow
+pg-start              # initdb on first run, start Postgres, create `goodie`
+cargo leptos watch    # migrate, seed, build and serve on http://127.0.0.1:3000
 ```
 
-to go to your newly created project.
-Feel free to explore the project structure, but the best place to start with your application code is in `src/app.rs`.
-Additionally, Cargo.toml may need updating as new versions of the dependencies are released, especially if things are not working after a `cargo update`.
-
-## Running your project
-
-```bash
-cargo leptos watch
-```
-
-## Installing Additional Tools
-
-By default, `cargo-leptos` uses `nightly` Rust, `cargo-generate`, and `sass`. If you run into any trouble, you may need to install one or more of these tools.
-
-1. `rustup toolchain install nightly --allow-downgrade` - make sure you have Rust nightly
-2. `rustup target add wasm32-unknown-unknown` - add the ability to compile Rust to WebAssembly
-3. `cargo install cargo-generate` - install `cargo-generate` binary (should be installed automatically in future)
-4. `npm install -g sass` - install `dart-sass` (should be optional in future
-5. Run `npm install` in end2end subdirectory before test
-
-## Compiling for Release
-```bash
-cargo leptos build --release
-```
-
-Will generate your server binary in target/release and your site package in target/site
-
-## Testing Your Project
-```bash
-cargo leptos end-to-end
-```
-
-```bash
-cargo leptos end-to-end --release
-```
-
-Cargo-leptos uses Playwright as the end-to-end test tool.
-Tests are located in end2end/tests directory.
-
-## Executing a Server on a Remote Machine Without the Toolchain
-After running a `cargo leptos build --release` the minimum files needed are:
-
-1. The server binary located in `target/server/release`
-2. The `site` directory and all files within located in `target/site`
-
-Copy these files to your remote server. The directory structure should be:
-```text
-goodie-never-deliver
-site/
-```
-Set the following environment variables (updating for your project as needed):
-```sh
-export LEPTOS_OUTPUT_NAME="goodie-never-deliver"
-export LEPTOS_SITE_ROOT="site"
-export LEPTOS_SITE_PKG_DIR="pkg"
-export LEPTOS_SITE_ADDR="127.0.0.1:3000"
-export LEPTOS_RELOAD_PORT="3001"
-```
-Finally, run the server binary.
-
-## Licensing
-
-This template itself is released under the Unlicense. You should replace the LICENSE for your own application with an appropriate license if you plan to release it publicly.
+That is the whole setup on a clean checkout. `cargo leptos watch` rebuilds the
+server, the WASM bundle and the CSS on save.
 
 ## Development environment (Nix)
 
-Everything the app builds against is pinned in `flake.nix` — no `cargo install`, no
-system Postgres, no npm-installed Tailwind.
-
-```bash
-nix develop        # or: direnv allow   (an .envrc with `use flake` is included)
-```
-
-The shell provides:
+`nix develop` (or `direnv allow` — an `.envrc` with `use flake` is included) puts
+every pinned tool on `PATH`:
 
 | Tool | Source | Notes |
 | --- | --- | --- |
@@ -174,16 +98,74 @@ catalogue outgrows it. The same function is also exposed at
 
 ## The database
 
-Postgres holds `products` (see `migrations/0001_create_products.sql`): money as
-integer cents, one row per object, a unique `slug` that is also the URL segment
-at `/p/:slug`, and a nullable `note` for the buying desk's editorial.
+Postgres holds one table, `products` (see `migrations/0001_create_products.sql`):
+money as integer cents, one row per object, a unique `slug` that is also the URL
+segment at `/p/:slug`, and a nullable `note` for the buying desk's editorial.
 
-Migrations run at startup, so a fresh cluster needs nothing but the dev shell:
+### Running the migrations
+
+There are two ways to apply them, and they are interchangeable — both read the
+same `./migrations` directory and the same `_sqlx_migrations` bookkeeping table.
+
+**1. Automatically, when the app starts.** `src/main.rs` runs
+
+```rust
+sqlx::migrate!("./migrations").run(&pool).await
+```
+
+before it binds the port, so the normal loop needs no migration step at all:
 
 ```bash
-pg-start                # initdb, start, create `goodie`
-cargo leptos watch      # migrates, seeds, serves
+pg-start              # initdb on first run, start the cluster, create `goodie`
+cargo leptos watch    # migrates, seeds, serves on http://127.0.0.1:3000
 ```
+
+From an empty cluster that is the whole setup: schema and 194 products.
+
+**2. By hand, with `sqlx-cli`** (already in the dev shell). Useful for applying
+a migration without restarting the server, or for inspecting state:
+
+```bash
+sqlx migrate info     # what is applied and what is pending
+sqlx migrate run      # apply everything pending
+```
+
+Both read `DATABASE_URL`, which the dev shell exports for you. `sqlx migrate run`
+is idempotent — running it against an up-to-date database does nothing.
+
+### Adding a migration
+
+```bash
+sqlx migrate add <description>        # writes migrations/<n>_<description>.sql
+```
+
+Files are applied in numeric order and the leading number is the version. Write
+plain SQL; `create table if not exists` and friends keep re-runs harmless.
+
+The migrations are compiled **into the binary** by `sqlx::migrate!`, so editing
+anything under `migrations/` triggers a rebuild of the crate — `cargo leptos
+watch` picks that up on its own.
+
+### Two things that will bite
+
+**Never edit a migration that has already been applied.** sqlx stores a checksum
+per version and refuses to continue when the file no longer matches:
+
+```
+error: migration 2 was previously applied but has been modified
+```
+
+`sqlx migrate info` then shows `2/installed (different checksum)`. The fix in
+development is to throw the cluster away — `pg-reset && pg-start` — and let it
+re-apply from scratch. In anything you cannot reset, add a new migration instead.
+
+**There are no down-migrations.** The files were created without `-r`, so
+`sqlx migrate revert` reports "No migrations available to revert". Rolling back
+in development means `pg-reset`. If you want reversible migrations from here on,
+add them with `sqlx migrate add -r <description>`, which writes a `.up.sql` and a
+`.down.sql` pair.
+
+### The seed data
 
 Seed data is **committed**, not fetched at boot:
 
@@ -191,12 +173,24 @@ Seed data is **committed**, not fetched at boot:
   [dummyjson.com/products](https://dummyjson.com/products), verbatim.
 - `migrations/0002_seed_products.sql` — the insert statements, generated from
   that file by `scripts/generate-seed-sql.py`. Edit the payload or the
-  generator, never the SQL.
+  generator, never the SQL. The inserts end in `on conflict (id) do nothing`, so
+  applying them twice is safe.
+
+To refresh it:
 
 ```bash
-python3 scripts/generate-seed-sql.py    # regenerate after changing the payload
-sqlx migrate run                        # or just restart the app
+FIELDS=id,title,description,category,price,discountPercentage,rating,stock,brand,\
+sku,weight,dimensions,warrantyInformation,shippingInformation,availabilityStatus,\
+returnPolicy,minimumOrderQuantity,tags,thumbnail,images
+curl -s "https://dummyjson.com/products?limit=0&select=$FIELDS" \
+    -o seed/dummyjson-products.json
+python3 scripts/generate-seed-sql.py
+pg-reset && pg-start          # the seed migration's checksum has changed
+cargo leptos watch
 ```
+
+That last step is the checksum rule above: regenerating `0002` after it has been
+applied invalidates it, so the database has to start clean.
 
 The seed brings real categories (24 of them), prices from $0.79 to $36,999.99,
 availability and product photography, so the chip row, the empty states and the
@@ -262,3 +256,54 @@ Notes:
   `style/tailwind.css`. That is what `nodejs` is in the shell for.
 - Sass is still available if you want it: add `style-file = "style/main.scss"` back
   and cargo-leptos will compile it and concatenate it *before* the Tailwind output.
+
+## Tests
+
+```bash
+cargo test --no-default-features --features ssr
+```
+
+Unit tests cover the money formatter, the index one-liner, the chip list and the
+search/filter composition in `src/catalog.rs`.
+
+The repository also carries the starter's Playwright scaffold in `end2end/`
+(`cargo leptos end-to-end`, config in `[package.metadata.leptos]`). Its one
+example spec still asserts the original template's "Welcome to Leptos" markup,
+so it fails against this app until it is rewritten.
+
+## Building for release
+
+```bash
+cargo leptos build --release
+```
+
+That produces two things:
+
+1. the server binary at `target/release/goodie-never-deliver`
+2. the site package at `target/site` (WASM, JS, CSS, and everything in `public/`)
+
+To run it somewhere without the toolchain, copy both across, keeping the site
+directory beside the binary:
+
+```text
+goodie-never-deliver
+site/
+```
+
+and set:
+
+```sh
+export LEPTOS_OUTPUT_NAME="goodie-never-deliver"
+export LEPTOS_SITE_ROOT="site"
+export LEPTOS_SITE_PKG_DIR="pkg"
+export LEPTOS_SITE_ADDR="127.0.0.1:3000"
+export LEPTOS_RELOAD_PORT="3001"
+export DATABASE_URL="postgres://user@host:5432/goodie"
+```
+
+`DATABASE_URL` is required: the binary refuses to start without it, and it runs
+the migrations against that database before it binds the port.
+
+## Licensing
+
+Released into the public domain under the Unlicense — see `LICENSE`.
