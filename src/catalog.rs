@@ -41,7 +41,7 @@ pub const UNDER_400: &str = "Under $400";
 pub const IN_STOCK: &str = "In stock";
 
 impl Product {
-    /// The index number the design prints beside each entry.
+    /// The catalogue number printed beside each entry.
     pub fn num(&self) -> String {
         format!("{:02}", self.id)
     }
@@ -59,7 +59,7 @@ impl Product {
         category_label(&self.category)
     }
 
-    /// The one-liner under the title in the index: the description's first
+    /// The one-liner under the title on the shelf: the description's first
     /// sentence, which is how these read.
     pub fn line(&self) -> String {
         let text = self.description.trim();

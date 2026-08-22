@@ -31,8 +31,8 @@ pub fn SearchScreen() -> impl IntoView {
                     <IconSearch size=18 />
                     <input
                         class="min-w-0 flex-1 bg-transparent text-[14.5px] font-semibold text-ink caret-accent outline-none placeholder:font-normal placeholder:text-ink/45"
-                        placeholder="Search the index"
-                        aria-label="Search the index"
+                        placeholder="Search the shelf"
+                        aria-label="Search the shelf"
                         prop:value=move || shop.query.get()
                         on:input=move |ev| shop.query.set(event_target_value(&ev))
                     />

@@ -128,7 +128,7 @@
             # Dev-only: the server upserts this admin on startup, so a `pg-reset`
             # still leaves an account that can reach the admin console. Nothing
             # here is a secret — the cluster is a throwaway on localhost.
-            ADMIN_EMAIL = "admin@kessel.test";
+            ADMIN_EMAIL = "admin@goodie.test";
             ADMIN_PASSWORD = "admin-dev-password";
             # Tell cargo-leptos which versions it is looking at: it skips the
             # GitHub release check, and — for Tailwind — the "v4" prefix is what

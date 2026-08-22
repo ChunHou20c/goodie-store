@@ -11,7 +11,7 @@ use crate::catalog::Product;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
-    Index,
+    Catalogue,
     PriceLow,
     PriceHigh,
 }
@@ -20,15 +20,15 @@ impl Sort {
     /// The sort control cycles rather than opening a menu.
     pub fn next(self) -> Self {
         match self {
-            Sort::Index => Sort::PriceLow,
+            Sort::Catalogue => Sort::PriceLow,
             Sort::PriceLow => Sort::PriceHigh,
-            Sort::PriceHigh => Sort::Index,
+            Sort::PriceHigh => Sort::Catalogue,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Sort::Index => "Issue order",
+            Sort::Catalogue => "Catalogue order",
             Sort::PriceLow => "Price ↑",
             Sort::PriceHigh => "Price ↓",
         }
@@ -63,7 +63,7 @@ impl Shop {
             toast_gen: RwSignal::new(0),
             query: RwSignal::new(String::new()),
             filters: RwSignal::new(Vec::new()),
-            sort: RwSignal::new(Sort::Index),
+            sort: RwSignal::new(Sort::Catalogue),
         }
     }
 
@@ -194,7 +194,7 @@ impl Shop {
                 .with(|f| crate::catalog::search(products, q, f))
         });
         match self.sort.get() {
-            Sort::Index => {}
+            Sort::Catalogue => {}
             Sort::PriceLow => found.sort_by_key(|p| p.price_cents),
             Sort::PriceHigh => found.sort_by_key(|p| std::cmp::Reverse(p.price_cents)),
         }

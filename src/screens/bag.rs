@@ -102,10 +102,10 @@ pub fn BagScreen() -> impl IntoView {
                                     "Nothing in here yet."
                                 </div>
                                 <p class="mt-2 mb-[18px] text-[13px] leading-[1.6] text-ink/62 text-pretty">
-                                    "Start with the index — things we'd happily own twice."
+                                    "Start with the shelf — things we'd happily own twice."
                                 </p>
                                 <A href="/" {..} class="btn btn-primary no-underline">
-                                    "Back to Issue 14"
+                                    "Back to Main Page"
                                 </A>
                             </div>
                         }

@@ -1,6 +1,7 @@
-//! Kessel — the shop shell: top bar, screen, sticky action, bottom nav.
+//! Goodie Store — the shop shell: top bar, screen, sticky action, bottom nav.
 //!
-//! Implements `Kessel Shop.dc.html` from the "Mobile shopping app design"
+//! Implements the `Kessel Shop.dc.html` canvas (the design file's own name)
+//! from the "Mobile shopping app design"
 //! Claude Design project, on the Modernist design system. The prototype
 //! switches screens in local state; on the web each screen is a real route,
 //! so a product is linkable and the back button behaves.
@@ -82,7 +83,7 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/goodie-never-deliver.css" />
-        <Title text="Kessel — an electronics store that reads like a magazine" />
+        <Title text="Goodie Store — an electronics store that reads like a magazine" />
 
         <Router>
             <div class="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-ground sm:border-x-2 sm:border-ink/40">
@@ -100,7 +101,9 @@ pub fn App() -> impl IntoView {
                 <div class="sticky bottom-0 z-20 bg-ground">
                     <Toast />
                     <StickyAction />
-                    <BottomNav />
+                    <Suspense fallback=|| ()>
+                        <BottomNav />
+                    </Suspense>
                 </div>
             </div>
         </Router>
@@ -119,13 +122,13 @@ fn TopBar() -> impl IntoView {
                 Screen::Home => {
                     view! {
                         <div class="font-heading text-[19px] font-extrabold tracking-[0.16em]">
-                            "KESSEL"
+                            "GOODIE STORE"
                         </div>
                     }
                         .into_any()
                 }
                 other => {
-                    let label = if matches!(other, Screen::Product(_)) { "Index" } else { "Back" };
+                    let label = if matches!(other, Screen::Product(_)) { "Shop" } else { "Back" };
                     view! {
                         <A
                             href="/"
@@ -281,6 +284,7 @@ fn ProductActions(product: Product) -> impl IntoView {
 #[component]
 fn BottomNav() -> impl IntoView {
     let shop = Shop::from_context();
+    let catalog = Catalog::from_context();
     let screen = use_screen();
 
     view! {
@@ -295,8 +299,8 @@ fn BottomNav() -> impl IntoView {
                 };
                 let tabs = [
                     (
-                        "Index",
-                        "Issue 14".to_string(),
+                        "Shop",
+                        format!("{} objects", catalog.len()),
                         "/",
                         matches!(here, Screen::Home | Screen::Product(_)),
                     ),
@@ -363,13 +367,13 @@ fn NotFound() -> impl IntoView {
     view! {
         <div class="px-[18px] py-12">
             <div class="font-heading text-xl font-extrabold tracking-[-0.015em]">
-                "That page is not in this issue."
+                "That page is not part of the shop."
             </div>
             <p class="mt-2 mb-4 text-[13px] leading-[1.6] text-ink/62">
-                "Every object lives in the index — start there."
+                "Every object lives on the shelf — start there."
             </p>
             <A href="/" {..} class="btn btn-primary no-underline">
-                "Back to Issue 14"
+                "Back to Main Page"
             </A>
         </div>
     }

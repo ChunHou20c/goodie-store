@@ -1,9 +1,12 @@
-//! Home — the issue: a cover story, then the numbered index.
+//! Home — a cover story, then the first few objects on the shelf.
 
 use leptos::prelude::*;
 use leptos_router::components::A;
 
 use crate::catalog::Catalog;
+
+/// How many entries the home screen previews before "Browse everything".
+const FEATURED: usize = 4;
 use crate::ui::{IconArrowRight, Kicker, Photo, WithCatalog};
 
 #[component]
@@ -13,7 +16,12 @@ pub fn HomeScreen() -> impl IntoView {
     view! {
         <div>
             <div class="flex items-baseline justify-between px-[18px] pt-[18px]">
-                <Kicker class="text-accent-700">"Issue 14 · Aug"</Kicker>
+                <Kicker class="text-accent-700">
+                    // The catalogue's real size, not an invented issue number.
+                    <Suspense fallback=|| {
+                        "The shelf"
+                    }>{move || format!("The shelf · {} objects", catalog.len())}</Suspense>
+                </Kicker>
                 <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink/50">
                     "Free returns, always"
                 </div>
@@ -34,27 +42,20 @@ pub fn HomeScreen() -> impl IntoView {
                     {..}
                     class="btn btn-primary w-full justify-between px-4 py-3.5 tracking-[0.04em]"
                 >
-                    "Read the whole issue"
+                    "Browse everything"
                     <IconArrowRight />
                 </A>
             </div>
 
             <div class="flex items-baseline justify-between px-[18px] pt-4 pb-2">
-                <Kicker>"The index"</Kicker>
-                <div class="text-[11px] text-ink/50">
-                    // Everything the boundary needs to print goes inside it: a
-                    // Suspense sibling to a static text node shifts the node walk
-                    // during hydration and the text lands on a marker comment.
-                    <Suspense fallback=|| ()>
-                        {move || format!("{} objects", catalog.len())}
-                    </Suspense>
-                </div>
+                <Kicker>"Selected"</Kicker>
+                <div class="text-[11px] text-ink/50">{format!("First {FEATURED}")}</div>
             </div>
 
             <WithCatalog>
                 {move || {
                     catalog
-                        .take(4)
+                        .take(FEATURED)
                         .into_iter()
                         .map(|p| {
                             view! {
@@ -93,7 +94,7 @@ pub fn HomeScreen() -> impl IntoView {
                     "“Buy it once. We'll help you keep it running.”"
                 </div>
                 <div class="text-[12.5px] leading-[1.55] opacity-90">
-                    "Five-year parts guarantee on everything in the index — repairs booked from your orders page."
+                    "Five-year parts guarantee on everything we stock — repairs booked from your orders page."
                 </div>
             </div>
             <div class="h-5"></div>

@@ -1,10 +1,10 @@
-# Kessel — `goodie-never-deliver`
+# Goodie Store 
 
 A full-stack shop: [Leptos](https://github.com/leptos-rs/leptos) (SSR +
 hydration) on [Axum](https://github.com/tokio-rs/axum), styled with Tailwind CSS
 v4, with the product catalogue in Postgres. The four screens implement the
-*Kessel Shop* design on its Modernist design system — see
-[The app](#the-app--kessel-issue-14).
+*Kessel Shop* design (the design file's own name) on its Modernist design
+system — see [The app](#the-app--goodie-store).
 
 ## Quick start
 
@@ -59,14 +59,14 @@ mismatch, so they move together:
 
 The dev shell prints a warning if `Cargo.lock` and the CLI drift apart.
 
-## The app — Kessel, Issue 14
+## The app — Goodie Store
 
 The four screens implement `Kessel Shop.dc.html` from the *Mobile shopping app
 design* Claude Design project, on its **Modernist** design system.
 
 | Route | Screen |
 | --- | --- |
-| `/` | The issue: cover story, then the numbered index |
+| `/` | Cover story, then the first few objects on the shelf |
 | `/search` | Filter chips, cycling sort, two-column results |
 | `/p/:id` | Photograph, price, spec table, the desk's note |
 | `/bag` | Lines with steppers, totals, checkout |
@@ -219,7 +219,7 @@ Three deliberate departures from the prototype:
 
 The toast is anchored just above the bottom chrome rather than the design's flat
 96px, which landed it on top of the button it reports on. The product page's
-"From Issue 14" panel only appears when a row has a `note`; nothing in the seed
+"Why we stock it" panel only appears when a row has a `note`; nothing in the seed
 writes one.
 
 ## Accounts and the admin console
@@ -233,7 +233,7 @@ Signing in mints 32 random bytes, base64url-encoded, and returns them in a
 cookie:
 
 ```
-kessel_session=<token>; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000
+goodie_session=<token>; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000
 ```
 
 The database stores only `sha256(token)`, so a dump of `sessions` cannot be
@@ -266,7 +266,7 @@ button, and — for admins — the link to `/admin`.
 
 If `ADMIN_EMAIL` and `ADMIN_PASSWORD` are both set, the server upserts that
 account as an admin on startup; unset, it skips the step and says so in the log.
-The dev shell exports throwaway values (`admin@kessel.test`), so `pg-reset`
+The dev shell exports throwaway values (`admin@goodie.test`), so `pg-reset`
 always leaves you with a working admin. Set real ones in production, or omit them
 and promote an account by hand.
 
@@ -342,7 +342,7 @@ Notes:
 cargo test --no-default-features --features ssr
 ```
 
-Unit tests cover the money formatter, the index one-liner, the chip list and the
+Unit tests cover the money formatter, the shelf one-liner, the chip list and the
 search/filter composition in `src/catalog.rs`.
 
 The repository also carries the starter's Playwright scaffold in `end2end/`

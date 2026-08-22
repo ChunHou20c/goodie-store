@@ -205,7 +205,9 @@ pub fn WithCatalog(children: ChildrenFn) -> impl IntoView {
     view! {
         <Suspense fallback=|| {
             view! {
-                <div class="px-[18px] py-12 text-[13px] text-ink/55">"Loading the index…"</div>
+                <div class="px-[18px] py-12 text-[13px] text-ink/55">
+                    "Loading the catalogue…"
+                </div>
             }
         }>
             {move || match catalog.status() {
@@ -215,7 +217,7 @@ pub fn WithCatalog(children: ChildrenFn) -> impl IntoView {
                     view! {
                         <div class="px-[18px] py-12">
                             <div class="font-heading text-xl font-extrabold tracking-[-0.015em]">
-                                "The index is unavailable."
+                                "The catalogue is unavailable."
                             </div>
                             <p class="mt-2 text-[13px] leading-[1.6] text-ink/62">
                                 "The catalogue could not be read from the database."

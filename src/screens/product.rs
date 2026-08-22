@@ -26,13 +26,13 @@ pub fn ProductScreen() -> impl IntoView {
                     view! {
                         <div class="px-[18px] py-12">
                             <div class="font-heading text-xl font-extrabold tracking-[-0.015em]">
-                                "That object is not in this issue."
+                                "We do not stock that."
                             </div>
                             <p class="mt-2 mb-4 text-[13px] leading-[1.6] text-ink/62">
-                                "It may have sold out and left the index."
+                                "It may have sold out and left the shelf."
                             </p>
                             <A href="/" {..} class="btn btn-primary no-underline">
-                                "Back to Issue 14"
+                                "Back to Main Page"
                             </A>
                         </div>
                     }
@@ -94,7 +94,7 @@ fn ProductBody(product: Product) -> impl IntoView {
                 .map(|note| {
                     view! {
                         <div class="border-b-2 border-ink/40 bg-surface p-[18px]">
-                            <Kicker class="text-accent-700">"From Issue 14"</Kicker>
+                            <Kicker class="text-accent-700">"Why we stock it"</Kicker>
                             <p class="mt-2.5 text-sm leading-[1.6] text-pretty">{note}</p>
                             <div class="mt-3 text-[11.5px] uppercase tracking-[0.06em] text-ink/55">
                                 "Written by the buying desk"

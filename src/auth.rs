@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// How long a session lives, in the cookie and in the database.
 pub const SESSION_MAX_AGE_SECS: i64 = 60 * 60 * 24 * 30;
-pub const COOKIE_NAME: &str = "kessel_session";
+pub const COOKIE_NAME: &str = "goodie_session";
 pub const MIN_PASSWORD_LEN: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
