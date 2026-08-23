@@ -13,6 +13,7 @@ start.
 | [Accounts and the admin console](#accounts-and-the-admin-console) | roles, sessions, the admin-only import |
 | [Styling](#styling-tailwind-css-v4) | design tokens and the Tailwind v4 setup |
 | [Tests](#tests) · [Building for release](#building-for-release) | what runs, and what ships |
+| [Release artifacts](#release-artifacts) · [CI/CD](#cicd) | the three Nix packages, and the workflows that publish them |
 
 ## Development environment (Nix)
 
@@ -378,3 +379,59 @@ export DATABASE_URL="postgres://user@host:5432/goodie"
 
 `DATABASE_URL` is required: the binary refuses to start without it, and it runs
 the migrations against that database before it binds the port.
+
+## Release artifacts
+
+`cargo leptos build --release` is what the dev shell does by hand. The flake
+wraps it so the same build is reproducible and cross-compilable:
+
+| Output | What it is |
+| --- | --- |
+| `nix build .#default` | the native package — `bin/` plus `share/goodie-never-deliver/site`, with the `LEPTOS_*` variables baked in as wrapper defaults. This is the build that runs `cargo test`, and `nix run` starts it |
+| `nix build .#container` | a `dockerTools.buildLayeredImage` tarball: the package's closure, CA certificates, `/tmp`, and nothing else — no shell, no package manager |
+| `nix build .#static` / `.#linux-archive` | `x86_64-unknown-linux-musl`, statically linked, plus `site/` and a `run.sh`; the archive is a reproducible `.tar.gz` |
+| `nix build .#windows` / `.#windows-archive` | `x86_64-pc-windows-gnu` cross-compiled through `pkgsCross.mingwW64`, plus `site/` and a CRLF `run.cmd`; the archive is a `.zip` |
+
+Three details are load-bearing:
+
+**The site package is built once.** WASM, JS, CSS and `public/` do not depend on
+the server's target, so the two cross builds copy `site/` out of the native
+package rather than running `cargo leptos` again. Only the `ssr` binary is
+cross-compiled, with `cargo build --no-default-features --features ssr`.
+
+**Panic locations pin the toolchain.** `std`'s panic messages embed absolute
+paths into the binary, and an unremapped one keeps *the entire Rust toolchain* —
+rustc, clippy, rust-analyzer, both `rust-std` targets — alive in the closure.
+The build passes `--remap-path-prefix`, which takes the runtime closure from
+1.4 GiB to 73 MiB, and the container image with it.
+
+**Both standalone binaries are checked for runtime dependencies at build time.**
+The musl one fails the build if `readelf -d` reports any `NEEDED` entry; the
+Windows one fails if `objdump -p` shows an import that is not a Windows system
+DLL. That is what makes "unzip and run" true rather than hopeful — `ring`,
+`argon2`, `sqlx` and rustls are all pure Rust or statically linked C, and
+`reqwest` uses rustls with `webpki-roots`, so there is no OpenSSL and no
+system certificate store to find.
+
+## CI/CD
+
+Two workflows, both of which do their real work through `nix build` — there is
+no Dockerfile, no `rustup`, and no `cargo install` step anywhere.
+
+`.github/workflows/ci.yml` runs on pushes to `main`, on pull requests, and on
+demand. It evaluates the flake, builds the native package (which is what runs
+the unit tests), builds the three release artifacts, and uploads them. A second
+job then loads the container image, points it at a throwaway Postgres service
+container, and checks that it serves the SSR shell, the hydration bundle and
+the stylesheet — a missing or misplaced `site/` shows up here rather than in
+production.
+
+`.github/workflows/release.yml` runs on a `v*` tag. It repeats the build, pushes
+the image to `ghcr.io/<owner>/goodie-never-deliver` under the tag, the
+version-without-`v`, and `latest`, then creates a GitHub release carrying the
+two archives and a `SHA256SUMS`.
+
+Both cache the Nix store between runs with `nix-community/cache-nix-action`,
+keyed on `flake.lock`, `Cargo.lock` and `rust-toolchain.toml`. A cold run
+compiles the crate three times over and takes about twenty minutes; a warm one
+is a couple of minutes.

@@ -43,10 +43,81 @@ cargo test --no-default-features --features ssr
 cargo leptos build --release
 ```
 
+## Running a release build
+
+Three artifacts come out of the flake, and CI builds all three on every push.
+They are the *same* build — one native compile produces the site package, and
+the two standalone binaries are cross-compiled from it.
+
+```bash
+nix build .#container         # docker image, loadable tar.gz
+nix build .#linux-archive     # .tar.gz — static x86_64 Linux binary + site/
+nix build .#windows-archive   # .zip    — x86_64 Windows .exe + site/
+nix run   .#                  # build and start it straight from the flake
+```
+
+All of them need one thing from you: `DATABASE_URL`, pointing at a Postgres
+instance. The server runs its own migrations against it on startup, so an empty
+database is fine — it comes back with the 20 seed products in it.
+
+### Container
+
+```bash
+docker load -i result                       # or: docker pull ghcr.io/<owner>/goodie-never-deliver
+docker run --rm -p 3000:3000 \
+  -e DATABASE_URL='postgres://user:pass@host:5432/goodie' \
+  goodie-never-deliver:0.1.0
+```
+
+It listens on `0.0.0.0:3000` and has no shell in it — the entrypoint is the
+server. To reach a Postgres running on the host, add `--network host` (Linux) or
+use `host.docker.internal` in the URL (Docker Desktop).
+
+### Linux and Windows archives
+
+Unpack, and run the launcher beside the binary:
+
+```bash
+tar xzf goodie-never-deliver-0.1.0-x86_64-linux.tar.gz
+cd goodie-never-deliver-0.1.0-x86_64-linux
+DATABASE_URL='postgres://user:pass@host:5432/goodie' ./run.sh
+```
+
+```bat
+rem after unzipping goodie-never-deliver-0.1.0-x86_64-windows.zip
+set DATABASE_URL=postgres://user:pass@host:5432/goodie
+run.cmd
+```
+
+Both default to `127.0.0.1:3000`; set `LEPTOS_SITE_ADDR` to change it. The
+launcher exists because the binary finds its assets through `LEPTOS_SITE_ROOT` —
+running the executable directly works too, as long as you export the variables
+[ARCHITECTURE.md](ARCHITECTURE.md#building-for-release) lists. Neither binary
+needs a runtime installed: the Linux one is statically linked against musl, and
+the Windows one imports nothing but system DLLs.
+
+### Optional environment
+
+| | |
+| --- | --- |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | upserts an admin account on startup; unset means no bootstrap |
+| `LEPTOS_SITE_ADDR` | listen address, default `127.0.0.1:3000` (`0.0.0.0:3000` in the container) |
+
+## Releasing
+
+CI runs on every push: it builds all three artifacts, then starts the container
+against a throwaway Postgres and checks that it serves the app shell, the
+hydration bundle and the stylesheet. Pushing a `v*` tag additionally publishes
+the container to GHCR and attaches the archives to a GitHub release.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
 ## More
 
 [ARCHITECTURE.md](ARCHITECTURE.md) covers the dev environment, the server/client
-state split, the database and its migrations, the auth model, the design system,
-and the release build.
+state split, the database and its migrations, the auth model, and the design
+system.
 
 Released into the public domain under the Unlicense — see `LICENSE`.

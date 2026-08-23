@@ -1,0 +1,110 @@
+name: Release
+
+# Tag a commit and push the tag:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# This builds the same three artifacts CI builds, publishes the container to
+# GHCR and attaches the two archives to a GitHub release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must already exist)"
+        required: true
+
+permissions:
+  contents: write # create the release
+  packages: write # push to ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 5G
+          # A release run reuses CI's cache but does not prune it.
+          purge: false
+
+      # `nix build .#default` runs the unit tests, so a release cannot be cut
+      # from a commit whose tests fail.
+      - name: Build and test (native)
+        run: nix build .#default --print-build-logs
+
+      - name: Build release artifacts
+        run: |
+          nix build --print-build-logs --out-link result-container .#container
+          nix build --print-build-logs --out-link result-linux    .#linux-archive
+          nix build --print-build-logs --out-link result-windows  .#windows-archive
+          mkdir -p dist
+          cp -L result-linux/*.tar.gz dist/
+          cp -L result-windows/*.zip  dist/
+          ls -lh dist
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Push the container to GHCR
+        run: |
+          set -euo pipefail
+          image=$(docker load -i result-container | sed -n 's/^Loaded image: //p')
+          echo "built $image"
+
+          # ghcr.io wants a lowercase owner; repository names already are.
+          repo="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          tag='${{ github.event.inputs.tag || github.ref_name }}'
+
+          echo '${{ secrets.GITHUB_TOKEN }}' \
+            | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+          for t in "$tag" "${tag#v}" latest; do
+            docker tag "$image" "$repo:$t"
+            docker push "$repo:$t"
+          done
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag='${{ github.event.inputs.tag || github.ref_name }}'
+          repo="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+
+          notes=$(cat <<EOF
+          ## Artifacts
+
+          | | |
+          | --- | --- |
+          | Linux (x86_64) | \`*-x86_64-linux.tar.gz\` — statically linked, runs on any glibc or musl distro |
+          | Windows (x86_64) | \`*-x86_64-windows.zip\` — no runtime to install |
+          | Container | \`docker pull $repo:$tag\` |
+
+          Every archive holds the server binary with its \`site/\` directory beside
+          it and a launcher script. All of them need \`DATABASE_URL\` pointing at a
+          Postgres instance; the server runs its own migrations on startup.
+
+          See the README for the full run instructions.
+          EOF
+          )
+
+          gh release create "$tag" dist/* \
+            --title "$tag" \
+            --notes "$notes" \
+            --verify-tag

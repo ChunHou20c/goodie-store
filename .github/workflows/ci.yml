@@ -1,0 +1,141 @@
+name: CI
+
+# Every artifact comes out of `nix build`, so the workflow only has to install
+# Nix, keep its store warm between runs, and upload what the flake produced.
+# There is no rustup, no cargo-install, no npm, and no separate Dockerfile.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build all targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The Rust toolchain, the cargo dependency vendor and every intermediate
+      # store path survive between runs; a warm cache turns a ~20 minute cold
+      # build into a couple of minutes.
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-last-accessed: P7D
+
+      - name: Evaluate the flake
+        run: nix flake check --no-build
+
+      # The native build is the one that runs `cargo test`, so it gates the
+      # rest. It also produces the site package the two cross builds copy.
+      - name: Build and test (native)
+        run: nix build .#default --print-build-logs
+
+      - name: Build release targets
+        run: |
+          nix build --print-build-logs --out-link result-container .#container
+          nix build --print-build-logs --out-link result-linux    .#linux-archive
+          nix build --print-build-logs --out-link result-windows  .#windows-archive
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          cp -L result-linux/*.tar.gz dist/
+          cp -L result-windows/*.zip  dist/
+          cp -L result-container      dist/container-image.tar.gz
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goodie-never-deliver-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: goodie-never-deliver-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-image
+          path: dist/container-image.tar.gz
+          if-no-files-found: error
+
+  smoke-test:
+    name: Run the container against Postgres
+    needs: build
+    runs-on: ubuntu-latest
+
+    # The same thing a deployment does: point the server at a database it has
+    # never seen and let it migrate, seed and serve.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: goodie
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: goodie
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U goodie"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: container-image
+
+      - name: Load the image
+        run: |
+          # buildLayeredImage bakes name:tag into the archive, so read it back
+          # rather than guessing the version here.
+          image=$(docker load -i container-image.tar.gz | sed -n 's/^Loaded image: //p')
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "loaded $image"
+
+      # Host networking so the server reaches the Postgres service container,
+      # which GitHub publishes on the runner's own localhost.
+      - name: Start the server
+        run: |
+          docker run -d --name goodie --network host \
+            -e DATABASE_URL='postgres://goodie:secret@127.0.0.1:5432/goodie' \
+            -e LEPTOS_SITE_ADDR='0.0.0.0:3000' \
+            "$IMAGE"
+
+      - name: Wait for it, then check what it serves
+        run: |
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 2
+          done
+          set -e
+          # SSR shell, the hydration bundle, and the Tailwind output — if the
+          # site package were missing or misplaced the last two would 404.
+          curl -sf -o /dev/null http://127.0.0.1:3000/
+          curl -sf -o /dev/null http://127.0.0.1:3000/pkg/goodie-never-deliver.wasm
+          curl -sf -o /dev/null http://127.0.0.1:3000/pkg/goodie-never-deliver.css
+          curl -s http://127.0.0.1:3000/ | grep -q '<title>' || {
+            echo "server did not render the app shell" >&2; exit 1; }
+          echo "container serves the app"
+
+      - name: Server log
+        if: always()
+        run: docker logs goodie

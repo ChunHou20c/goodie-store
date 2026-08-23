@@ -14,3 +14,7 @@ target/
 # local postgres cluster (nix dev shell)
 .pg/
 .direnv/
+
+# nix build output symlinks
+result
+result-*
