@@ -228,6 +228,34 @@ The toast is anchored just above the bottom chrome rather than the design's flat
 "Why we stock it" panel only appears when a row has a `note`; nothing in the seed
 writes one.
 
+### What a failed server function answers
+
+A server function that returns `Err` answers `500` by default, which is a lie
+for anything the caller got wrong. `auth::refuse(status, message)` sets the
+status alongside the message:
+
+| | |
+| --- | --- |
+| `401` | wrong email or password; any write while signed out (`require_user`) |
+| `403` | a signed-in non-admin reaching an admin action (`require_admin`) |
+| `409` | registering an email that already has an account |
+| `422` | an email or password that fails validation; a product id that is not in the catalogue |
+| `500` | left alone — a query that failed is genuinely our fault |
+
+`refuse` sets the status **only for a `fetch`**. An `ActionForm` submitted before
+hydration is a plain form post, and `leptos_axum` answers those with a `302`
+back to the form carrying the error; that redirect is applied *before* the
+status override, so setting one would strand the browser on a bare error body.
+The status is cosmetic to the client either way — `server_fn` treats everything
+in `400..=599` as an error and decodes the body the same, so `FormError` renders
+these exactly as before.
+
+One thing to watch: during SSR, `ResponseOptions` belongs to the **page**
+response. A server function that calls `refuse` while a page is rendering would
+set that status on the whole page. Nothing does today — the gates are only on
+writes, and `list_cart` answers signed-out with an empty bag rather than a
+refusal — but that is the reason it stays that way.
+
 ## The bag
 
 `cart_items` (`migrations/0004_create_cart_items.sql`) is one row per

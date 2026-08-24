@@ -128,9 +128,11 @@ pub async fn remove_from_cart(product_id: i32) -> Result<(), ServerFnError> {
 #[cfg(feature = "ssr")]
 fn unknown_product(e: sqlx::Error) -> ServerFnError {
     match &e {
-        sqlx::Error::Database(db) if db.is_foreign_key_violation() => {
-            ServerFnError::new("That product is no longer in the catalogue.")
-        }
+        sqlx::Error::Database(db) if db.is_foreign_key_violation() => crate::auth::refuse(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "That product is no longer in the catalogue.",
+        ),
+        // Anything else here really is our fault, so it keeps the 500.
         _ => ServerFnError::new(format!("could not update the bag: {e}")),
     }
 }

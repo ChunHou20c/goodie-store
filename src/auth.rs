@@ -67,7 +67,7 @@ impl AuthUser {
 }
 
 #[cfg(feature = "ssr")]
-pub use ssr::{bootstrap_admin, current_user_from_request, require_admin, require_user};
+pub use ssr::{bootstrap_admin, current_user_from_request, refuse, require_admin, require_user};
 
 #[cfg(feature = "ssr")]
 mod ssr {
@@ -76,9 +76,12 @@ mod ssr {
     use argon2::password_hash::rand_core::{OsRng, RngCore};
     use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
     use argon2::Argon2;
-    use axum::http::header::{COOKIE, SET_COOKIE};
+    use axum::http::header::{ACCEPT, COOKIE, SET_COOKIE};
     use axum::http::request::Parts;
     use axum::http::HeaderValue;
+    // Re-exported so the server functions below get it from `use self::ssr::*`
+    // along with `refuse`, rather than importing axum a second time.
+    pub use axum::http::StatusCode;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     use leptos_axum::ResponseOptions;
@@ -154,6 +157,38 @@ mod ssr {
         ));
     }
 
+    // ── refusals ───────────────────────────────────────────────────────────
+
+    /// Fail with an HTTP status that says what kind of failure this is. A
+    /// server function answers `500` by default, which is a lie for anything
+    /// the caller got wrong — a mistyped password is not a server fault.
+    ///
+    /// The status is only set for a request the browser made with `fetch`. A
+    /// plain form post — an `ActionForm` submitted before hydration — is
+    /// answered by `leptos_axum` with a `302` back to the form carrying the
+    /// error, and that redirect is applied *before* our status is, so
+    /// overriding it would strand the browser on a bare error body.
+    pub fn refuse(status: StatusCode, message: impl std::fmt::Display) -> ServerFnError {
+        if !wants_html() {
+            if let Some(response) = use_context::<ResponseOptions>() {
+                response.set_status(status);
+            }
+        }
+        ServerFnError::new(message.to_string())
+    }
+
+    /// Whether this request is a plain document request rather than a `fetch`.
+    fn wants_html() -> bool {
+        let Some(parts) = use_context::<Parts>() else {
+            return false;
+        };
+        parts
+            .headers
+            .get(ACCEPT)
+            .and_then(|accept| accept.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html"))
+    }
+
     // ── sessions ───────────────────────────────────────────────────────────
 
     pub fn token_hash(token: &str) -> String {
@@ -198,9 +233,12 @@ mod ssr {
     }
 
     pub async fn require_user() -> Result<AuthUser, ServerFnError> {
-        current_user_from_request()
-            .await
-            .ok_or_else(|| ServerFnError::new("You need to be signed in to do that."))
+        current_user_from_request().await.ok_or_else(|| {
+            refuse(
+                StatusCode::UNAUTHORIZED,
+                "You need to be signed in to do that.",
+            )
+        })
     }
 
     /// The privilege boundary. Every admin-only server function starts here —
@@ -210,7 +248,10 @@ mod ssr {
         if user.is_admin() {
             Ok(user)
         } else {
-            Err(ServerFnError::new("That is an admin-only action."))
+            Err(refuse(
+                StatusCode::FORBIDDEN,
+                "That is an admin-only action.",
+            ))
         }
     }
 
@@ -261,14 +302,16 @@ pub async fn sign_up(
 
     let email = email.trim().to_lowercase();
     if !email.contains('@') || email.len() < 3 {
-        return Err(ServerFnError::new(
+        return Err(refuse(
+            StatusCode::UNPROCESSABLE_ENTITY,
             "That does not look like an email address.",
         ));
     }
     if password.chars().count() < MIN_PASSWORD_LEN {
-        return Err(ServerFnError::new(format!(
-            "Passwords need at least {MIN_PASSWORD_LEN} characters."
-        )));
+        return Err(refuse(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Passwords need at least {MIN_PASSWORD_LEN} characters."),
+        ));
     }
 
     let pool = pool()?;
@@ -288,7 +331,10 @@ pub async fn sign_up(
     .map_err(|e| ServerFnError::new(format!("could not create the account: {e}")))?;
 
     let Some((user_id,)) = user_id else {
-        return Err(ServerFnError::new("That email already has an account."));
+        return Err(refuse(
+            StatusCode::CONFLICT,
+            "That email already has an account.",
+        ));
     };
 
     let token = create_session(&pool, user_id)
@@ -312,8 +358,9 @@ pub async fn sign_in(email: String, password: String) -> Result<(), ServerFnErro
             .await
             .map_err(|e| ServerFnError::new(format!("sign-in failed: {e}")))?;
 
-    // One message for both a missing account and a wrong password.
-    let wrong = || ServerFnError::new("Email or password is wrong.");
+    // One message *and* one status for both a missing account and a wrong
+    // password: a different answer for each would confirm which emails exist.
+    let wrong = || refuse(StatusCode::UNAUTHORIZED, "Email or password is wrong.");
     let Some((user_id, hash)) = found else {
         return Err(wrong());
     };
