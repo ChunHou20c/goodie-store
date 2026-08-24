@@ -401,9 +401,13 @@
         windows-archive = mkArchive {
           drv = goodie-windows;
           suffix = "x86_64-windows";
+          # `zip -r` walks the directory in readdir order, which is not stable
+          # across filesystems — the payload would be identical but the archive
+          # would not. Feeding it a sorted list over `-@` fixes the order, and
+          # -X drops the uid/gid and timestamp extra fields.
           command = ''
             find "$dir" -exec touch -d @0 {} +
-            zip -qrX -9 $out/"$dir".zip "$dir"
+            find "$dir" | LC_ALL=C sort | zip -qX -9 $out/"$dir".zip -@
           '';
         };
 
