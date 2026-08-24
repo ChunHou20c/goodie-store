@@ -1,8 +1,13 @@
 //! Account — sign in, register, sign out. Doubles as the account screen, which
 //! is why signing out and the admin link live here rather than in the chrome.
+//!
+//! `/login?next=<path>` returns you where you came from once you are in. That
+//! is how the bag's sign-in gate works: adding to the bag needs an account, so
+//! the product page links here and gets the shopper back afterwards.
 
 use leptos::prelude::*;
 use leptos_router::components::A;
+use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::auth::{Auth, AuthUser, MIN_PASSWORD_LEN};
 use crate::ui::Kicker;
@@ -10,6 +15,28 @@ use crate::ui::Kicker;
 #[component]
 pub fn LoginScreen() -> impl IntoView {
     let auth = Auth::from_context();
+
+    // `?next=` is the only thing that navigates: a plain visit to /login keeps
+    // the old behaviour and flips to the account screen in place.
+    let query = use_query_map();
+    let next = move || query.read().get("next").as_deref().and_then(safe_next);
+
+    // This lives on the route component, not on `SignedOut`: that child is
+    // disposed as soon as the auth resource reports a user, which would race
+    // the effect that is supposed to move us on.
+    let navigate = use_navigate();
+    Effect::new(move |ran_before: Option<()>| {
+        let signed_in = matches!(auth.sign_in.value().get(), Some(Ok(_)))
+            || matches!(auth.sign_up.value().get(), Some(Ok(_)));
+        // The first run only subscribes. An action value that was already
+        // sitting there when the screen mounted is history, not a sign-in that
+        // just happened here.
+        if ran_before.is_some() && signed_in {
+            if let Some(to) = next() {
+                navigate(&to, Default::default());
+            }
+        }
+    });
 
     view! {
         <Suspense fallback=|| {
@@ -75,7 +102,7 @@ fn SignedOut() -> impl IntoView {
                 <Kicker class="text-accent-700">"Account"</Kicker>
                 <h2 class="mt-2 text-[30px] leading-[1.05] tracking-[-0.025em]">"Sign in"</h2>
                 <p class="mt-2.5 text-[13px] leading-[1.6] text-ink/62 text-pretty">
-                    "Your bag lives in this browser either way — an account is for orders, and for the buying desk."
+                    "Your bag lives with your account — sign in to start one. It is also how orders and the buying desk find you."
                 </p>
             </div>
 
@@ -135,6 +162,13 @@ fn SignedOut() -> impl IntoView {
     }
 }
 
+/// Where to send someone once they are signed in. A path on this site and
+/// nothing else — an absolute URL, or a protocol-relative `//host`, would let a
+/// crafted link bounce a freshly signed-in shopper somewhere off-site.
+fn safe_next(raw: &str) -> Option<String> {
+    (raw.starts_with('/') && !raw.starts_with("//")).then(|| raw.to_string())
+}
+
 /// The action's error, if the last run failed.
 fn error_of(value: Option<Result<(), ServerFnError>>) -> Option<String> {
     match value {
@@ -187,5 +221,33 @@ fn Field(
                 <span class="mt-1 block text-[11px] text-ink/50">{hint.clone()}</span>
             </Show>
         </label>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_next;
+
+    #[test]
+    fn keeps_a_path_on_this_site() {
+        assert_eq!(safe_next("/bag").as_deref(), Some("/bag"));
+        assert_eq!(
+            safe_next("/p/red-lipstick").as_deref(),
+            Some("/p/red-lipstick")
+        );
+        assert_eq!(safe_next("/").as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn refuses_to_leave_the_site() {
+        assert_eq!(safe_next("//evil.example"), None);
+        assert_eq!(safe_next("https://evil.example"), None);
+        assert_eq!(safe_next("javascript:alert(1)"), None);
+    }
+
+    #[test]
+    fn refuses_anything_that_is_not_a_path() {
+        assert_eq!(safe_next(""), None);
+        assert_eq!(safe_next("bag"), None);
     }
 }

@@ -1,38 +1,51 @@
 //! Bag — reversible: steppers, remove, and a total that carries the delivery
 //! promise so nothing new appears at checkout.
+//!
+//! The rows come from the server ([`crate::cart::Cart`]) and are priced against
+//! the catalogue, so every tap is a round-trip and what you see is what the
+//! database holds. A bag belongs to an account; signed out there is nothing to
+//! show but the way in.
 
 use leptos::prelude::*;
 use leptos_router::components::A;
 
+use crate::auth::Auth;
+use crate::cart::Cart;
 use crate::catalog::{money, Catalog};
-use crate::shop::Shop;
+use crate::screens::login::FormError;
 use crate::ui::{Photo, WithCatalog};
 
 #[component]
 pub fn BagScreen() -> impl IntoView {
-    let shop = Shop::from_context();
+    let cart = Cart::from_context();
+    let auth = Auth::from_context();
     let catalog = Catalog::from_context();
-    let subtotal = move || catalog.with(|products| money(shop.subtotal(products)));
+    let subtotal = move || catalog.with(|products| money(cart.subtotal(products)));
 
     view! {
         <div>
             <div class="border-b-2 border-ink/40 px-[18px] pt-[18px] pb-3.5">
                 <h2 class="text-[28px] tracking-[-0.02em]">"Your bag"</h2>
                 <div class="mt-1.5 text-[12.5px] text-ink/60">
-                    {move || {
-                        match shop.count() {
-                            0 => "Free returns for 30 days".to_string(),
-                            1 => "1 item · arrives Tue 25 Aug".to_string(),
-                            n => format!("{n} items · arrive Tue 25 Aug"),
-                        }
-                    }}
+                    // `count` reads a resource, so it needs a boundary.
+                    <Suspense fallback=|| {
+                        "Free returns for 30 days"
+                    }>
+                        {move || {
+                            match cart.count() {
+                                0 => "Free returns for 30 days".to_string(),
+                                1 => "1 item · arrives Tue 25 Aug".to_string(),
+                                n => format!("{n} items · arrive Tue 25 Aug"),
+                            }
+                        }}
+                    </Suspense>
                 </div>
             </div>
 
             <WithCatalog>
                 {move || {
                     catalog
-                        .with(|products| shop.lines(products))
+                        .with(|products| cart.rows(products))
                         .into_iter()
                         .map(|(p, qty)| {
                             let id = p.id;
@@ -51,7 +64,7 @@ pub fn BagScreen() -> impl IntoView {
                                                 {p.title.clone()}
                                             </div>
                                             <div class="font-heading text-sm font-extrabold whitespace-nowrap">
-                                                {money(p.price_cents * qty as i32)}
+                                                {money(p.price_cents * qty)}
                                             </div>
                                         </div>
                                         <div class="mt-[3px] text-[11.5px] text-ink/55">
@@ -59,10 +72,14 @@ pub fn BagScreen() -> impl IntoView {
                                         </div>
                                         <div class="mt-3 flex items-center justify-between">
                                             <div class="flex items-center border-2 border-ink">
+                                                // Every stepper is a write; disabling
+                                                // while one is in flight keeps a burst
+                                                // of taps from racing the refetch.
                                                 <button
-                                                    class="h-8 w-[34px] cursor-pointer font-heading text-[17px] font-extrabold hover:bg-ink/7"
+                                                    class="h-8 w-[34px] cursor-pointer font-heading text-[17px] font-extrabold hover:bg-ink/7 disabled:cursor-not-allowed disabled:opacity-45"
                                                     aria-label=dec_label
-                                                    on:click=move |_| shop.bump(id, -1)
+                                                    disabled=move || cart.pending()
+                                                    on:click=move |_| cart.set(id, qty - 1)
                                                 >
                                                     "−"
                                                 </button>
@@ -70,16 +87,18 @@ pub fn BagScreen() -> impl IntoView {
                                                     {qty}
                                                 </div>
                                                 <button
-                                                    class="h-8 w-[34px] cursor-pointer font-heading text-[17px] font-extrabold hover:bg-ink/7"
+                                                    class="h-8 w-[34px] cursor-pointer font-heading text-[17px] font-extrabold hover:bg-ink/7 disabled:cursor-not-allowed disabled:opacity-45"
                                                     aria-label=inc_label
-                                                    on:click=move |_| shop.bump(id, 1)
+                                                    disabled=move || cart.pending()
+                                                    on:click=move |_| cart.set(id, qty + 1)
                                                 >
                                                     "+"
                                                 </button>
                                             </div>
                                             <button
-                                                class="cursor-pointer text-[11.5px] font-semibold uppercase tracking-[0.08em] text-accent-700 hover:text-accent"
-                                                on:click=move |_| shop.remove(id)
+                                                class="cursor-pointer text-[11.5px] font-semibold uppercase tracking-[0.08em] text-accent-700 hover:text-accent disabled:cursor-not-allowed disabled:opacity-45"
+                                                disabled=move || cart.pending()
+                                                on:click=move |_| cart.remove_item(id)
                                             >
                                                 "Remove"
                                             </button>
@@ -93,22 +112,13 @@ pub fn BagScreen() -> impl IntoView {
             </WithCatalog>
 
             <Suspense fallback=|| ()>
+                <div class="px-[18px]">
+                    <FormError message=move || cart.last_error() />
+                </div>
                 <Show
-                    when=move || { shop.count() > 0 }
+                    when=move || { cart.count() > 0 }
                     fallback=move || {
-                        view! {
-                            <div class="px-[18px] py-11">
-                                <div class="font-heading text-xl font-extrabold tracking-[-0.015em]">
-                                    "Nothing in here yet."
-                                </div>
-                                <p class="mt-2 mb-[18px] text-[13px] leading-[1.6] text-ink/62 text-pretty">
-                                    "Start with the shelf — things we'd happily own twice."
-                                </p>
-                                <A href="/" {..} class="btn btn-primary no-underline">
-                                    "Back to Main Page"
-                                </A>
-                            </div>
-                        }
+                        view! { <EmptyBag signed_in=auth.is_signed_in() /> }
                     }
                 >
                     <div class="p-[18px]">
@@ -130,6 +140,37 @@ pub fn BagScreen() -> impl IntoView {
                 </Show>
             </Suspense>
             <div class="h-5"></div>
+        </div>
+    }
+}
+
+/// Two different nothings: a signed-in shopper has an empty bag, a visitor has
+/// no bag at all.
+#[component]
+fn EmptyBag(signed_in: bool) -> impl IntoView {
+    let (heading, body, href, label) = if signed_in {
+        (
+            "Nothing in here yet.",
+            "Start with the shelf — things we'd happily own twice.",
+            "/",
+            "Back to Main Page",
+        )
+    } else {
+        (
+            "Your bag needs an account.",
+            "Sign in and it follows you — this browser, your phone, next week.",
+            "/login?next=/bag",
+            "Sign in",
+        )
+    };
+
+    view! {
+        <div class="px-[18px] py-11">
+            <div class="font-heading text-xl font-extrabold tracking-[-0.015em]">{heading}</div>
+            <p class="mt-2 mb-[18px] text-[13px] leading-[1.6] text-ink/62 text-pretty">{body}</p>
+            <A href={href} {..} class="btn btn-primary no-underline">
+                {label}
+            </A>
         </div>
     }
 }

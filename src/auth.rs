@@ -410,6 +410,13 @@ impl Auth {
     pub fn is_admin(&self) -> bool {
         self.with(|user| user.is_some_and(AuthUser::is_admin))
     }
+
+    /// Bumped when a sign-in, sign-up or sign-out completes. Anything whose
+    /// value depends on *who* is signed in tracks this — see
+    /// [`crate::cart::Cart::load`].
+    pub fn version(&self) -> usize {
+        self.sign_in.version().get() + self.sign_up.version().get() + self.sign_out.version().get()
+    }
 }
 
 #[cfg(all(test, feature = "ssr"))]

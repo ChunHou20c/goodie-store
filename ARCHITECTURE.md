@@ -64,14 +64,16 @@ design* Claude Design project, on its **Modernist** design system.
 | `/` | Cover story, then the first few objects on the shelf |
 | `/search` | Filter chips, cycling sort, two-column results |
 | `/p/:id` | Photograph, price, spec table, the desk's note |
-| `/bag` | Lines with steppers, totals, checkout |
+| `/bag` | Lines with steppers, totals, checkout — needs an account |
 | `/login` | Sign in, register, sign out — doubles as the account screen |
 | `/admin` | The import console, admin only |
 
 - `src/catalog.rs` — the `Product` row, the `list_products` server function, the
   chip predicates and the search. The only part of the app that talks to the
   database.
-- `src/shop.rs` — bag, saved list, search controls and the toast, in one struct
+- `src/cart.rs` — the bag: `cart_items` rows, the four cart server functions,
+  and the `Cart` context struct the screens read.
+- `src/shop.rs` — saved list, search controls and the toast, in one struct
   provided through context. Holds product ids and nothing else.
 - `src/app.rs` — the shell: top bar, sticky action, bottom tabs. All of the
   chrome is derived from the route, not from a screen flag.
@@ -80,9 +82,15 @@ design* Claude Design project, on its **Modernist** design system.
 
 ### What is server state and what is not
 
-The catalogue and your account come from Postgres. The bag, the saved list, the
+The catalogue, your account and your bag come from Postgres. The saved list, the
 query, the chips and the sort all live in the tab — they never reach the server,
 and reloading the page empties them.
+
+The bag moved server-side after the first pass, which is why
+`migrations/0001_create_products.sql` still opens by calling `products` "the one
+piece of server state". Applied migrations are checksummed by sqlx and editing
+one breaks every existing database, so that comment is deliberately left wrong;
+this section is the current answer.
 
 `list_products` is a Leptos server function behind a **blocking resource**, so
 it resolves during SSR, is serialized into the HTML, and is read straight out of
@@ -206,7 +214,8 @@ Three deliberate departures from the prototype:
   server-render. Navigation is `<A>`, so it also works before hydration.
 - The prototype seeds a bag with one item. This starts **empty** — a shop that
   puts something in your bag on first load would be wrong, and the empty state
-  is part of the design anyway.
+  is part of the design anyway. There are now two empty states: a signed-in
+  shopper has an empty bag, a visitor has no bag at all.
 
 - The prototype's six hand-written objects are replaced by the seeded
   catalogue, so the chip row is now every category the data has (sorted by how
@@ -218,6 +227,33 @@ The toast is anchored just above the bottom chrome rather than the design's flat
 96px, which landed it on top of the button it reports on. The product page's
 "Why we stock it" panel only appears when a row has a `note`; nothing in the seed
 writes one.
+
+## The bag
+
+`cart_items` (`migrations/0004_create_cart_items.sql`) is one row per
+`(user_id, product_id)` with a quantity, capped at 99 by both a `check`
+constraint and `cart::MAX_QUANTITY`. `added_at` keeps the bag in the order things
+were added, which the in-memory `Vec` used to give for free.
+
+**A bag belongs to an account.** There is no guest bag, so there is also no
+guest-bag merge at sign-in: a signed-out visitor's "Add to bag" is a link to
+`/login?next=/p/<slug>` that returns them to the product afterwards. Every write
+(`add_to_cart`, `set_cart_quantity`, `remove_from_cart`) starts at
+`require_user()` — the swapped-out button is presentation, that call is the
+boundary. `list_cart` is the exception: signed out it answers with an empty bag
+rather than an error, because the top bar asks for it on every page and a visitor
+is not a fault.
+
+Reads go through `Cart`, shaped like `Auth`: a blocking resource whose source
+tracks the three write actions' versions **plus** `Auth::version()`. A finished
+write re-reads the bag; signing out empties it on screen without a reload. Each
+tap is a round-trip and the row redraws from the server's answer, so the quantity
+on screen is always the one in the database — the steppers disable while a write
+is in flight rather than guessing ahead of it.
+
+**There is no inventory.** `products.stock` is displayed but nothing reserves or
+deducts it, and nothing checks a quantity against it. Checkout is still the
+`"Payment step — coming next"` toast.
 
 ## Accounts and the admin console
 

@@ -1,9 +1,10 @@
-//! Client-side shop state: the bag, the saved list, the search controls and
-//! the toast. One struct in context so every screen reads the same signals.
+//! Client-side shop state: the saved list, the search controls and the toast.
+//! One struct in context so every screen reads the same signals.
 //!
-//! None of this touches the server — the bag lives in the tab until checkout
-//! exists. Product rows come from [`crate::catalog::Catalog`]; this module
-//! only ever holds product ids.
+//! None of this touches the server, and none of it needs an account. The bag
+//! used to live here too; it is server state now — see [`crate::cart::Cart`].
+//! Product rows come from [`crate::catalog::Catalog`]; this module only ever
+//! holds product ids.
 
 use leptos::prelude::*;
 
@@ -37,8 +38,6 @@ impl Sort {
 
 #[derive(Clone, Copy)]
 pub struct Shop {
-    /// (product id, quantity), in the order things were added.
-    cart: RwSignal<Vec<(i32, u32)>>,
     saved: RwSignal<Vec<i32>>,
     toast: RwSignal<Option<String>>,
     /// Bumped on every flash so a stale timer cannot clear a newer toast.
@@ -57,7 +56,6 @@ impl Default for Shop {
 impl Shop {
     pub fn new() -> Self {
         Self {
-            cart: RwSignal::new(Vec::new()),
             saved: RwSignal::new(Vec::new()),
             toast: RwSignal::new(None),
             toast_gen: RwSignal::new(0),
@@ -69,61 +67,6 @@ impl Shop {
 
     pub fn from_context() -> Self {
         expect_context()
-    }
-
-    // ── bag ────────────────────────────────────────────────────────────────
-
-    pub fn count(&self) -> u32 {
-        self.cart.with(|c| c.iter().map(|(_, q)| q).sum())
-    }
-
-    /// Bag total in cents, priced from the catalogue rows passed in.
-    pub fn subtotal(&self, products: &[Product]) -> i32 {
-        self.cart.with(|c| {
-            c.iter()
-                .filter_map(|(id, qty)| {
-                    products
-                        .iter()
-                        .find(|p| p.id == *id)
-                        .map(|p| p.price_cents * *qty as i32)
-                })
-                .sum()
-        })
-    }
-
-    /// The bag as rows, dropping any line whose product left the catalogue.
-    pub fn lines(&self, products: &[Product]) -> Vec<(Product, u32)> {
-        self.cart.with(|c| {
-            c.iter()
-                .filter_map(|(id, qty)| {
-                    products
-                        .iter()
-                        .find(|p| p.id == *id)
-                        .map(|p| (p.clone(), *qty))
-                })
-                .collect()
-        })
-    }
-
-    /// Add `delta` to a line, dropping it when the quantity reaches zero.
-    pub fn bump(&self, id: i32, delta: i32) {
-        self.cart.update(|c| {
-            match c.iter_mut().find(|(i, _)| *i == id) {
-                Some(line) => line.1 = line.1.saturating_add_signed(delta),
-                None if delta > 0 => c.push((id, delta as u32)),
-                None => {}
-            }
-            c.retain(|(_, q)| *q > 0);
-        });
-    }
-
-    pub fn remove(&self, id: i32) {
-        self.cart.update(|c| c.retain(|(i, _)| *i != id));
-    }
-
-    pub fn add(&self, product: &Product) {
-        self.bump(product.id, 1);
-        self.flash(format!("{} added", product.title));
     }
 
     // ── saved list ─────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ use leptos_router::hooks::use_location;
 use leptos_router::{ParamSegment, StaticSegment};
 
 use crate::auth::Auth;
+use crate::cart::Cart;
 use crate::catalog::{money, Catalog, Product};
 use crate::screens::{
     AdminScreen, BagScreen, HomeScreen, LoginScreen, ProductScreen, SearchScreen,
@@ -79,7 +80,38 @@ pub fn App() -> impl IntoView {
     // One blocking resource for the catalogue: resolved during SSR, serialized
     // into the response, and read from there on the client.
     provide_context(Catalog::load());
-    provide_context(Auth::load());
+    // The bag is per-user, so it loads after — and from — the auth state.
+    let auth = Auth::load();
+    provide_context(auth);
+    let cart = Cart::load(auth);
+    provide_context(cart);
+
+    // Announce an add once the server has taken it, not on the click. This sits
+    // on `App` rather than on the button: the sticky action is rebuilt whenever
+    // the chrome re-renders, and an effect owned by it can be replaced between
+    // the click and the response, dropping the announcement.
+    let shop = Shop::from_context();
+    let catalog = Catalog::from_context();
+    Effect::new(move |_| {
+        let settled = cart.add.value().get();
+        if settled.is_none() {
+            return;
+        }
+        let Some(id) = cart.take_last_added() else {
+            return;
+        };
+        if matches!(settled, Some(Ok(_))) {
+            let title = catalog.with(|products| {
+                products
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map(|p| p.title.clone())
+            });
+            if let Some(title) = title {
+                shop.flash(format!("{title} added"));
+            }
+        }
+    });
 
     view! {
         <Stylesheet id="leptos" href="/pkg/goodie-never-deliver.css" />
@@ -112,7 +144,7 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn TopBar() -> impl IntoView {
-    let shop = Shop::from_context();
+    let cart = Cart::from_context();
     let auth = Auth::from_context();
     let screen = use_screen();
 
@@ -199,11 +231,15 @@ fn TopBar() -> impl IntoView {
                     aria-label="Bag"
                 >
                     <IconBag />
-                    <Show when=move || { shop.count() > 0 }>
-                        <span class="flex h-[18px] min-w-[18px] items-center justify-center bg-accent px-1 text-[11px] font-extrabold text-ground">
-                            {move || shop.count()}
-                        </span>
-                    </Show>
+                    // The count is a resource read, so it needs a boundary of
+                    // its own — the account glyph's does not cover it.
+                    <Suspense fallback=|| ()>
+                        <Show when=move || { cart.count() > 0 }>
+                            <span class="flex h-[18px] min-w-[18px] items-center justify-center bg-accent px-1 text-[11px] font-extrabold text-ground">
+                                {move || cart.count()}
+                            </span>
+                        </Show>
+                    </Suspense>
                 </A>
             </div>
         </header>
@@ -214,6 +250,7 @@ fn TopBar() -> impl IntoView {
 #[component]
 fn StickyAction() -> impl IntoView {
     let shop = Shop::from_context();
+    let cart = Cart::from_context();
     let screen = use_screen();
 
     let catalog = Catalog::from_context();
@@ -224,7 +261,7 @@ fn StickyAction() -> impl IntoView {
             None => ().into_any(),
         },
         Screen::Bag => view! {
-            <Show when=move || { shop.count() > 0 }>
+            <Show when=move || { cart.count() > 0 }>
                 <div class="border-t-2 border-ink/40 bg-ground px-[18px] py-3">
                     <button
                         class="btn btn-primary w-full justify-between px-4 py-[15px]"
@@ -232,7 +269,7 @@ fn StickyAction() -> impl IntoView {
                     >
                         "Checkout"
                         <span>
-                            {move || catalog.with(|products| money(shop.subtotal(products)))}
+                            {move || catalog.with(|products| money(cart.subtotal(products)))}
                         </span>
                     </button>
                 </div>
@@ -250,8 +287,16 @@ fn StickyAction() -> impl IntoView {
 #[component]
 fn ProductActions(product: Product) -> impl IntoView {
     let shop = Shop::from_context();
+    let cart = Cart::from_context();
+    let auth = Auth::from_context();
+
+    // Pull everything out first: the view macro wraps each block in a closure,
+    // and `product` cannot be moved into more than one of them.
     let id = product.id;
     let price = product.price_label();
+    // Slugs are `[a-z0-9-]` (see `slugify` in catalog.rs) and `/` is legal in a
+    // query value, so there is nothing here to percent-encode.
+    let sign_in_href = format!("/login?next=/p/{}", product.slug);
     let saved = move || shop.is_saved(id);
 
     view! {
@@ -270,20 +315,46 @@ fn ProductActions(product: Product) -> impl IntoView {
             >
                 <IconBookmark />
             </button>
-            <button
-                class="btn btn-primary flex-1 justify-between px-4 py-[15px]"
-                on:click=move |_| shop.add(&product)
+            // A bag belongs to an account, so signed out the button becomes the
+            // link that gets you one — and brings you back to this product.
+            <Show
+                when=move || auth.is_signed_in()
+                fallback={
+                    let (sign_in_href, price) = (sign_in_href.clone(), price.clone());
+                    move || {
+                        let (href, price) = (sign_in_href.clone(), price.clone());
+                        // Cloned into locals here rather than captured: the
+                        // macro moves whatever the children block names, which
+                        // would make this `FnOnce` and `Show` wants `Fn`.
+                        view! {
+                            <A
+                                href={href}
+                                {..}
+                                class="btn btn-primary flex-1 justify-between px-4 py-[15px] no-underline"
+                            >
+                                "Sign in to add"
+                                <span>{price}</span>
+                            </A>
+                        }
+                    }
+                }
             >
-                "Add to bag"
-                <span>{price}</span>
-            </button>
+                <button
+                    class="btn btn-primary flex-1 justify-between px-4 py-[15px]"
+                    disabled=move || cart.pending()
+                    on:click=move |_| cart.add_item(id)
+                >
+                    "Add to bag"
+                    <span>{price.clone()}</span>
+                </button>
+            </Show>
         </div>
     }
 }
 
 #[component]
 fn BottomNav() -> impl IntoView {
-    let shop = Shop::from_context();
+    let cart = Cart::from_context();
     let catalog = Catalog::from_context();
     let screen = use_screen();
 
@@ -291,7 +362,7 @@ fn BottomNav() -> impl IntoView {
         <nav class="grid grid-cols-3 border-t-2 border-ink/40 bg-ground">
             {move || {
                 let here = screen();
-                let count = shop.count();
+                let count = cart.count();
                 let bag_sub = if count == 1 {
                     "1 item".to_string()
                 } else {

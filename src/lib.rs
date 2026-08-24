@@ -1,5 +1,6 @@
 pub mod app;
 pub mod auth;
+pub mod cart;
 pub mod catalog;
 pub mod screens;
 pub mod shop;
