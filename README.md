@@ -69,9 +69,69 @@ docker run --rm -p 3000:3000 \
   goodie-never-deliver:0.1.0
 ```
 
-It listens on `0.0.0.0:3000` and has no shell in it — the entrypoint is the
-server. To reach a Postgres running on the host, add `--network host` (Linux) or
-use `host.docker.internal` in the URL (Docker Desktop).
+It listens on `0.0.0.0:3000`. To reach a Postgres running on the host, add
+`--network host` (Linux) or use `host.docker.internal` in the URL (Docker
+Desktop).
+
+#### Injecting environment
+
+The image carries no `DATABASE_URL` — it is deployment input, never baked in —
+so every way of running it has to supply one. Any of the usual mechanisms work:
+
+```bash
+# one at a time
+docker run --rm -p 3000:3000 \
+  -e DATABASE_URL='postgres://user:pass@db:5432/goodie' \
+  -e ADMIN_EMAIL='admin@example.com' \
+  -e ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+  goodie-never-deliver:0.1.0
+
+# or from a file of KEY=VALUE lines (no quotes, no `export`)
+docker run --rm -p 3000:3000 --env-file goodie.env goodie-never-deliver:0.1.0
+```
+
+```yaml
+# compose.yaml
+services:
+  goodie:
+    image: goodie-never-deliver:0.1.0
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://goodie:secret@db:5432/goodie
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set it in .env or the shell}
+    depends_on:
+      db: { condition: service_healthy }
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: goodie
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: goodie
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goodie"]
+      interval: 5s
+      retries: 10
+```
+
+Two things about this image specifically:
+
+**Everything is overridable, including what the image already sets.** `docker
+inspect` shows `LEPTOS_SITE_ADDR` and `SSL_CERT_FILE` baked into `Config.Env`,
+and the binary itself is wrapped with *defaults* rather than fixed values —
+`-e LEPTOS_SITE_ADDR=0.0.0.0:8080` wins over both.
+
+**There is no shell in the image.** The entrypoint is the server binary, so the
+usual escape hatches — `docker run … sh -c 'export … && …'`, an entrypoint
+wrapper script, `docker exec … sh` — are not available. Variables have to
+arrive from the outside, through `-e`, `--env-file`, compose, or your
+orchestrator's secret mechanism (a Kubernetes `secretKeyRef`, an ECS
+`secrets` block). That is the tradeoff for an image with no package manager and
+nothing else to attack.
+
+If `DATABASE_URL` is missing the server panics on the first line of `main` and
+the container exits non-zero, before it binds a port — so a misconfigured deploy
+fails immediately rather than serving errors.
 
 ### Linux and Windows archives
 
@@ -96,12 +156,20 @@ running the executable directly works too, as long as you export the variables
 needs a runtime installed: the Linux one is statically linked against musl, and
 the Windows one imports nothing but system DLLs.
 
-### Optional environment
+### Environment
 
-| | |
-| --- | --- |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | upserts an admin account on startup; unset means no bootstrap |
-| `LEPTOS_SITE_ADDR` | listen address, default `127.0.0.1:3000` (`0.0.0.0:3000` in the container) |
+The same variables apply to all three artifacts.
+
+| | | |
+| --- | --- | --- |
+| `DATABASE_URL` | **required** | `postgres://user:pass@host:5432/goodie` — migrated on startup |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | optional | upserts an admin account on startup; unset means no bootstrap |
+| `LEPTOS_SITE_ADDR` | optional | listen address, default `127.0.0.1:3000` (`0.0.0.0:3000` in the container) |
+| `LEPTOS_SITE_ROOT` / `LEPTOS_OUTPUT_NAME` / `LEPTOS_SITE_PKG_DIR` | preset | where the binary finds `site/`; the container wrapper and the two launcher scripts set these for you |
+
+Set both admin variables to bootstrap an account, or neither — the server logs
+which it did. They are read on every start, so changing `ADMIN_PASSWORD` and
+restarting resets that account's password.
 
 ## Releasing
 
