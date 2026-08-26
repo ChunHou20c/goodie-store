@@ -318,11 +318,37 @@ how you record another shipment — but it means the import button is not a
 "refresh" button as far as stock is concerned. Both halves share one
 transaction, so a failed run leaves neither the row nor the stock.
 
-One thing this table still does *not* do, deliberately: **nothing reads it.**
-The "In stock" chip and the product page still read `products.availability`, the
-free-text string the importer copies from upstream, which is unrelated to these
-numbers and can disagree with them. Moving the display onto `available` is a
-later step.
+### What the shop reads
+
+`list_products` left-joins `inventory` and carries `coalesce(i.available, 0)`
+onto every `Product` as `available`. That one join is the whole read path — it is
+the only `SELECT` against `products`, and `Catalog` is the single resource every
+screen filters over, so nothing else had to change.
+
+A product with **no** inventory row reads as 0 rather than dropping out of the
+catalogue: nothing in the schema enforces that a row exists, and sold out is the
+honest answer to "we have no record of any".
+
+Two derived readings, both in `catalog.rs`:
+
+- `Product::in_stock()` is `available > 0`, which is what the "In stock" search
+  chip filters on. Note this is **wider than it used to be** — the chip read the
+  upstream string and so excluded anything marked `"Low Stock"`. Two left is
+  still two you can buy.
+- `Product::stock_label()` is what the product page prints beside the price:
+  `Out of stock` at zero, `Low stock` at or below `LOW_STOCK_AT` (five),
+  `In stock` above it. Bands rather than the exact count, so browsing the shop
+  does not publish the inventory.
+
+`products.availability` — the upstream free-text string — is still imported and
+still on the `Product` row, but nothing renders it any more. `products.stock` is
+likewise still filled by the importer, and is no longer carried to the client at
+all.
+
+The catalogue is a blocking resource loaded once per page and refetched only
+after an import, so `available` is a **page-load snapshot**. That is accurate
+today because nothing but the importer moves stock; once checkout reserves, a
+long-open tab will show stale counts until it reloads.
 
 `products.stock` remains what it always was: a column the importer fills from
 upstream that no screen has ever rendered. It is not the stock record; this

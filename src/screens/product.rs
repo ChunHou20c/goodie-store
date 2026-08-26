@@ -51,7 +51,8 @@ fn ProductBody(product: Product) -> impl IntoView {
     let num = product.num();
     let title = product.title.clone();
     let price = product.price_label();
-    let availability = product.availability.clone();
+    let stock_label = product.stock_label();
+    let availablity = product.availablity();
     let description = product.description.clone();
     let thumbnail = product.thumbnail_url.clone();
     let specs = product.specs();
@@ -68,7 +69,7 @@ fn ProductBody(product: Product) -> impl IntoView {
                 <h2 class="mt-2 text-[30px] leading-[1.05] tracking-[-0.025em]">{title}</h2>
                 <div class="mt-2.5 flex items-baseline gap-3">
                     <div class="font-heading text-[22px] font-extrabold">{price}</div>
-                    <div class="text-xs text-ink/55">{availability}</div>
+                    <div class="text-xs text-ink/55">{stock_label}: {availablity}</div>
                 </div>
                 <p class="mt-3.5 text-[13.5px] leading-[1.65] text-pretty">{description}</p>
             </div>

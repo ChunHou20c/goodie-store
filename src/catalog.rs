@@ -20,7 +20,13 @@ pub struct Product {
     pub note: Option<String>,
     pub price_cents: i32,
     pub rating: Option<f32>,
-    pub stock: i32,
+    /// What is left to sell: `inventory.available`, i.e. on hand minus
+    /// reserved. A product with no `inventory` row reads as 0 — nothing on the
+    /// shelf is the honest answer to "we have no record of any".
+    pub available: i32,
+    /// The upstream availability string the importer copies. Kept on the row,
+    /// but nothing renders it any more: [`Product::stock_label`] is derived
+    /// from `available` instead, so the shelf and the database agree.
     pub availability: String,
     pub brand: Option<String>,
     pub sku: Option<String>,
@@ -40,6 +46,11 @@ pub struct Product {
 pub const UNDER_400: &str = "Under $400";
 pub const IN_STOCK: &str = "In stock";
 
+/// At or below this many left, the shelf says "Low stock" rather than "In
+/// stock". Above zero either way — a low shelf is still a shelf you can buy
+/// from, which is why the `IN_STOCK` chip matches both.
+pub const LOW_STOCK_AT: i32 = 5;
+
 impl Product {
     /// The catalogue number printed beside each entry.
     pub fn num(&self) -> String {
@@ -51,7 +62,21 @@ impl Product {
     }
 
     pub fn in_stock(&self) -> bool {
-        self.availability == "In Stock"
+        self.available > 0
+    }
+
+    pub fn availablity(&self) -> i32 {
+        self.available
+    }
+
+    /// What the product page prints beside the price. Three bands rather than
+    /// the exact count, so browsing does not publish the inventory.
+    pub fn stock_label(&self) -> &'static str {
+        match self.available {
+            n if n <= 0 => "Out of stock",
+            n if n <= LOW_STOCK_AT => "Low stock",
+            _ => "In stock",
+        }
     }
 
     /// `mobile-accessories` → `Mobile accessories`.
@@ -178,10 +203,15 @@ pub fn search<'a>(products: &'a [Product], query: &str, filters: &[String]) -> V
 pub async fn list_products() -> Result<Vec<Product>, ServerFnError> {
     let pool = expect_context::<sqlx::PgPool>();
     sqlx::query_as::<_, Product>(
-        "select id, slug, title, category, description, note, price_cents, rating, stock, \
-         availability, brand, sku, weight_grams, width_mm, height_mm, depth_mm, warranty, \
-         shipping, return_policy, min_order, thumbnail_url, tags \
-         from products order by id",
+        // Left join, because a product with no inventory row is a real
+        // possibility (nothing enforces one) and should read as sold out
+        // rather than vanish from the catalogue.
+        "select p.id, p.slug, p.title, p.category, p.description, p.note, p.price_cents, \
+         p.rating, coalesce(i.available, 0) as available, p.availability, p.brand, p.sku, \
+         p.weight_grams, p.width_mm, p.height_mm, p.depth_mm, p.warranty, p.shipping, \
+         p.return_policy, p.min_order, p.thumbnail_url, p.tags \
+         from products p left join inventory i on i.product_id = p.id \
+         order by p.id",
     )
     .fetch_all(&pool)
     .await
@@ -714,7 +744,7 @@ mod import_tests {
 mod tests {
     use super::*;
 
-    fn product(id: i32, category: &str, price_cents: i32, availability: &str) -> Product {
+    fn product(id: i32, category: &str, price_cents: i32, available: i32) -> Product {
         Product {
             id,
             slug: format!("p{id}"),
@@ -724,8 +754,8 @@ mod tests {
             note: None,
             price_cents,
             rating: None,
-            stock: 1,
-            availability: availability.to_string(),
+            available,
+            availability: "ignored".to_string(),
             brand: None,
             sku: None,
             weight_grams: None,
@@ -751,18 +781,15 @@ mod tests {
 
     #[test]
     fn line_is_the_first_sentence() {
-        assert_eq!(
-            product(1, "beauty", 999, "In Stock").line(),
-            "First sentence."
-        );
+        assert_eq!(product(1, "beauty", 999, 10).line(), "First sentence.");
     }
 
     #[test]
     fn chips_are_categories_by_count_then_price_and_stock() {
         let products = vec![
-            product(1, "beauty", 999, "In Stock"),
-            product(2, "laptops", 99999, "In Stock"),
-            product(3, "beauty", 1999, "Low Stock"),
+            product(1, "beauty", 999, 10),
+            product(2, "laptops", 99999, 10),
+            product(3, "beauty", 1999, 0),
         ];
         assert_eq!(
             chips(&products),
@@ -773,9 +800,9 @@ mod tests {
     #[test]
     fn filters_and_query_compose() {
         let products = vec![
-            product(1, "beauty", 999, "In Stock"),
-            product(2, "laptops", 99999, "In Stock"),
-            product(3, "beauty", 1999, "Low Stock"),
+            product(1, "beauty", 999, 10),
+            product(2, "laptops", 99999, 10),
+            product(3, "beauty", 1999, 0),
         ];
         let all: Vec<i32> = search(&products, "", &[]).iter().map(|p| p.id).collect();
         assert_eq!(all, vec![1, 2, 3]);
@@ -791,5 +818,35 @@ mod tests {
         assert_eq!(cheap_in_stock, vec![1]);
 
         assert!(search(&products, "product 2", &["beauty".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn the_shelf_label_comes_from_what_is_left() {
+        assert_eq!(product(1, "beauty", 999, 0).stock_label(), "Out of stock");
+        assert_eq!(product(1, "beauty", 999, 1).stock_label(), "Low stock");
+        assert_eq!(
+            product(1, "beauty", 999, LOW_STOCK_AT).stock_label(),
+            "Low stock"
+        );
+        assert_eq!(
+            product(1, "beauty", 999, LOW_STOCK_AT + 1).stock_label(),
+            "In stock"
+        );
+        // A product with no inventory row arrives as 0, not as a panic.
+        assert_eq!(product(1, "beauty", 999, -1).stock_label(), "Out of stock");
+    }
+
+    #[test]
+    fn a_low_shelf_still_counts_as_in_stock() {
+        // The upstream string used to exclude "Low Stock" from this chip. Two
+        // left is still two you can buy, so the chip now matches it.
+        let products = vec![product(1, "beauty", 999, 2), product(2, "beauty", 1999, 0)];
+        let found: Vec<i32> = search(&products, "", &[IN_STOCK.to_string()])
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(found, vec![1]);
+        assert!(products[0].in_stock());
+        assert!(!products[1].in_stock());
     }
 }

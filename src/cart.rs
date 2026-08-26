@@ -300,7 +300,7 @@ mod tests {
             note: None,
             price_cents,
             rating: None,
-            stock: 0,
+            available: 10,
             availability: "In Stock".into(),
             brand: None,
             sku: None,
