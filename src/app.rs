@@ -17,7 +17,8 @@ use crate::cart::Cart;
 use crate::catalog::{money, Catalog, Product};
 use crate::checkout::Checkout;
 use crate::screens::{
-    AdminScreen, BagScreen, CheckoutScreen, HomeScreen, LoginScreen, ProductScreen, SearchScreen,
+    AdminScreen, BagScreen, CheckoutScreen, HomeScreen, LoginScreen, OrdersScreen, ProductScreen,
+    SearchScreen,
 };
 use crate::shop::Shop;
 use crate::ui::{IconBack, IconBag, IconBookmark, IconSearch, IconUser};
@@ -51,6 +52,7 @@ enum Screen {
     Product(String),
     Bag,
     Checkout,
+    Orders,
     Login,
     Admin,
     Unknown,
@@ -62,6 +64,7 @@ fn screen_of(path: &str) -> Screen {
         "/search" => Screen::Search,
         "/bag" => Screen::Bag,
         "/checkout" => Screen::Checkout,
+        "/orders" => Screen::Orders,
         "/login" => Screen::Login,
         "/admin" => Screen::Admin,
         other => other
@@ -147,6 +150,7 @@ pub fn App() -> impl IntoView {
                         <Route path=(StaticSegment("p"), ParamSegment("id")) view=ProductScreen />
                         <Route path=StaticSegment("bag") view=BagScreen />
                         <Route path=StaticSegment("checkout") view=CheckoutScreen />
+                        <Route path=StaticSegment("orders") view=OrdersScreen />
                         <Route path=StaticSegment("login") view=LoginScreen />
                         <Route path=StaticSegment("admin") view=AdminScreen />
                     </Routes>

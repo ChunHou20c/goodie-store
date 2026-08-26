@@ -478,6 +478,134 @@ pub async fn get_order(order_id: i64) -> Result<Option<OrderView>, ServerFnError
     }))
 }
 
+/// How many of each kind the history screen shows. Small enough that it never
+/// needs paging, large enough to be a real history.
+pub const HISTORY_LIMIT: i64 = 20;
+
+/// One placed order, as the history screen reads it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrderSummary {
+    pub id: i64,
+    /// Pre-formatted by Postgres, because no timestamp is ever selected into
+    /// Rust here — see the module note on dependencies.
+    pub placed_on: String,
+    pub total_cents: i32,
+    pub lines: Vec<Line>,
+}
+
+impl OrderSummary {
+    pub fn total_label(&self) -> String {
+        money(self.total_cents)
+    }
+}
+
+/// A checkout that ran out of time. Kept so a shopper can see what they lost.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpiredReservation {
+    pub id: i64,
+    pub expired_on: String,
+    pub lines: Vec<Line>,
+}
+
+impl ExpiredReservation {
+    pub fn total_cents(&self) -> i32 {
+        total_cents(&self.lines)
+    }
+
+    pub fn total_label(&self) -> String {
+        money(self.total_cents())
+    }
+}
+
+/// Everything the history screen shows, in one round trip.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct History {
+    pub orders: Vec<OrderSummary>,
+    pub expired: Vec<ExpiredReservation>,
+}
+
+impl History {
+    pub fn is_empty(&self) -> bool {
+        self.orders.is_empty() && self.expired.is_empty()
+    }
+}
+
+/// What the signed-in shopper has bought, and what they let lapse.
+///
+/// Signed out reads as an empty history rather than an error, matching
+/// [`current_reservation`] and `list_cart`.
+#[server(endpoint = "order_history")]
+pub async fn order_history() -> Result<History, ServerFnError> {
+    use self::ssr::*;
+    use crate::auth::current_user_from_request;
+
+    let Some(user) = current_user_from_request().await else {
+        return Ok(History::default());
+    };
+    let pool = expect_context::<sqlx::PgPool>();
+
+    // Anything that lapsed while they were away should show as lapsed.
+    sweep_expired(&pool).await?;
+
+    let order_rows: Vec<(i64, String, i32)> = sqlx::query_as(
+        // Rendered in UTC and labelled as such: the app has no notion of a
+        // shopper's timezone, and an unlabelled time would silently be the
+        // server's.
+        "select id, \
+                to_char(placed_at at time zone 'UTC', 'DD Mon YYYY, HH24:MI') || ' UTC', \
+                total_cents \
+         from orders where user_id = $1 order by placed_at desc limit $2",
+    )
+    .bind(user.id)
+    .bind(HISTORY_LIMIT)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("could not read your orders: {e}")))?;
+
+    let mut orders = Vec::with_capacity(order_rows.len());
+    for (id, placed_on, total_cents) in order_rows {
+        let lines = sqlx::query_as::<_, Line>(
+            "select product_id, title, quantity, unit_price_cents \
+             from order_items where order_id = $1 order by product_id",
+        )
+        .bind(id)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| ServerFnError::new(format!("could not read your orders: {e}")))?;
+
+        orders.push(OrderSummary {
+            id,
+            placed_on,
+            total_cents,
+            lines,
+        });
+    }
+
+    let expired_rows: Vec<(i64, String)> = sqlx::query_as(
+        "select id, \
+                to_char(coalesce(settled_at, expires_at) at time zone 'UTC', \
+                        'DD Mon YYYY, HH24:MI') || ' UTC' \
+         from reservations where user_id = $1 and status = 'expired' \
+         order by coalesce(settled_at, expires_at) desc limit $2",
+    )
+    .bind(user.id)
+    .bind(HISTORY_LIMIT)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| ServerFnError::new(format!("could not read your checkouts: {e}")))?;
+
+    let mut expired = Vec::with_capacity(expired_rows.len());
+    for (id, expired_on) in expired_rows {
+        expired.push(ExpiredReservation {
+            id,
+            expired_on,
+            lines: reservation_lines(&pool, id).await?,
+        });
+    }
+
+    Ok(History { orders, expired })
+}
+
 // ── reactive context ───────────────────────────────────────────────────────
 
 /// The pending checkout, plus the two actions that move it along.

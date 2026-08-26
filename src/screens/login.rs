@@ -69,6 +69,14 @@ fn SignedIn(user: AuthUser) -> impl IntoView {
             </div>
 
             <div class="flex flex-col gap-2.5 px-[18px] py-[18px]">
+                <A
+                    href="/orders"
+                    {..}
+                    class="btn btn-secondary w-full justify-between px-4 py-3.5 no-underline"
+                >
+                    "Your orders"
+                    <span class="text-[11px] tracking-[0.14em]">"HISTORY"</span>
+                </A>
                 <Show when=move || is_admin>
                     <A
                         href="/admin"

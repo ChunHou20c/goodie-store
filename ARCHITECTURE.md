@@ -416,6 +416,19 @@ URL is not a way to read someone else's.
 `products`: an order is a historical record and has to keep reading correctly
 after a re-import or a rename.
 
+`/orders` is the history, linked from the account screen: what you bought, and
+underneath it the checkouts that lapsed. Lapsed ones are worth showing because
+expiry does not put the bag back, so this is the only record of what was in one.
+`order_history` sweeps first, so opening the page settles anything that ran out
+while you were away, and it is scoped to the signed-in shopper — signed out it
+answers with an empty history rather than an error, like `current_reservation`.
+Both lists are capped at `HISTORY_LIMIT` (20) rather than paged.
+
+Dates are formatted by Postgres — `to_char(… at time zone 'UTC', …)` — for the
+same reason no timestamp is selected into Rust. They are rendered **in UTC and
+labelled UTC**, because the app has no notion of a shopper's timezone and an
+unlabelled time would silently be the server's.
+
 ## Accounts and the admin console
 
 Two roles, `user` and `admin` (a Postgres enum), in `users`; sessions in
