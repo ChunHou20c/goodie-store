@@ -26,22 +26,33 @@ pub fn BagScreen() -> impl IntoView {
 
     view! {
         <div>
-            <div class="border-b-2 border-ink/40 px-[18px] pt-[18px] pb-3.5">
-                <h2 class="text-[28px] tracking-[-0.02em]">"Your bag"</h2>
-                <div class="mt-1.5 text-[12.5px] text-ink/60">
-                    // `count` reads a resource, so it needs a boundary.
-                    <Suspense fallback=|| {
-                        "Free returns for 30 days"
-                    }>
-                        {move || {
-                            match cart.count() {
-                                0 => "Free returns for 30 days".to_string(),
-                                1 => "1 item · arrives Tue 25 Aug".to_string(),
-                                n => format!("{n} items · arrive Tue 25 Aug"),
-                            }
-                        }}
-                    </Suspense>
+            <div class="flex items-start justify-between gap-3 border-b-2 border-ink/40 px-[18px] pt-[18px] pb-3.5">
+                <div>
+                    <h2 class="text-[28px] tracking-[-0.02em]">"Your bag"</h2>
+                    <div class="mt-1.5 text-[12.5px] text-ink/60">
+                        // `count` reads a resource, so it needs a boundary.
+                        <Suspense fallback=|| {
+                            "Free returns for 30 days"
+                        }>
+                            {move || {
+                                match cart.count() {
+                                    0 => "Free returns for 30 days".to_string(),
+                                    1 => "1 item · arrives Tue 25 Aug".to_string(),
+                                    n => format!("{n} items · arrive Tue 25 Aug"),
+                                }
+                            }}
+                        </Suspense>
+                    </div>
                 </div>
+                // Always offered, signed in or not: /orders has its own
+                // signed-out state that invites you to sign in.
+                <A
+                    href="/orders"
+                    {..}
+                    class="btn btn-secondary mt-1 flex-none px-3 py-2 text-[11px] tracking-[0.12em] no-underline"
+                >
+                    "ORDERS"
+                </A>
             </div>
 
             // The pending checkout is a resource read, so it needs a boundary:
