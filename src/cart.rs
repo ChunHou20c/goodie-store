@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::Auth;
 use crate::catalog::Product;
+use crate::checkout::Checkout;
 
 /// The per-line ceiling, matching the `check` on `cart_items.quantity`.
 pub const MAX_QUANTITY: i32 = 99;
@@ -154,18 +155,20 @@ pub struct Cart {
 }
 
 impl Cart {
-    /// Takes `Auth` rather than reading it from context so the ordering in
-    /// [`crate::app::App`] is a compile error to get wrong.
-    pub fn load(auth: Auth) -> Self {
+    /// Takes its dependencies rather than reading them from context so the
+    /// ordering in [`crate::app::App`] is a compile error to get wrong.
+    pub fn load(auth: Auth, checkout: Checkout) -> Self {
         let add = ServerAction::<AddToCart>::new();
         let set_quantity = ServerAction::<SetCartQuantity>::new();
         let remove = ServerAction::<RemoveFromCart>::new();
 
         // The three writes, plus who is signed in: signing out has to empty the
-        // bag on screen, not only in the database.
+        // bag on screen, not only in the database. Plus checkout, which empties
+        // the bag server-side — nothing else would tell this resource to re-read.
         let version = move || {
             (
                 auth.version(),
+                checkout.version(),
                 add.version().get(),
                 set_quantity.version().get(),
                 remove.version().get(),

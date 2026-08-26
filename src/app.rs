@@ -9,14 +9,15 @@
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::components::{Route, Router, Routes, A};
-use leptos_router::hooks::use_location;
+use leptos_router::hooks::{use_location, use_navigate};
 use leptos_router::{ParamSegment, StaticSegment};
 
 use crate::auth::Auth;
 use crate::cart::Cart;
 use crate::catalog::{money, Catalog, Product};
+use crate::checkout::Checkout;
 use crate::screens::{
-    AdminScreen, BagScreen, HomeScreen, LoginScreen, ProductScreen, SearchScreen,
+    AdminScreen, BagScreen, CheckoutScreen, HomeScreen, LoginScreen, ProductScreen, SearchScreen,
 };
 use crate::shop::Shop;
 use crate::ui::{IconBack, IconBag, IconBookmark, IconSearch, IconUser};
@@ -49,6 +50,7 @@ enum Screen {
     /// A product page, by slug; the row itself comes from the catalogue.
     Product(String),
     Bag,
+    Checkout,
     Login,
     Admin,
     Unknown,
@@ -59,6 +61,7 @@ fn screen_of(path: &str) -> Screen {
         "" => Screen::Home,
         "/search" => Screen::Search,
         "/bag" => Screen::Bag,
+        "/checkout" => Screen::Checkout,
         "/login" => Screen::Login,
         "/admin" => Screen::Admin,
         other => other
@@ -79,12 +82,29 @@ pub fn App() -> impl IntoView {
     provide_context(Shop::new());
     // One blocking resource for the catalogue: resolved during SSR, serialized
     // into the response, and read from there on the client.
-    provide_context(Catalog::load());
-    // The bag is per-user, so it loads after — and from — the auth state.
+    let catalog = Catalog::load();
+    provide_context(catalog);
+    // The bag and the checkout are per-user, so they load after — and from —
+    // the auth state.
     let auth = Auth::load();
     provide_context(auth);
-    let cart = Cart::load(auth);
+    let checkout = Checkout::load(auth);
+    provide_context(checkout);
+    let cart = Cart::load(auth, checkout);
     provide_context(cart);
+
+    // Opening or paying for a checkout moves `available` on every line, and the
+    // catalogue is otherwise fetched once per page load. Same shape as the
+    // admin console's refetch after an import.
+    Effect::new(move |_| {
+        // Both reads happen before the `||`, for the same reason: a run that
+        // short-circuits past `pay` would drop its subscription to it.
+        let started = matches!(checkout.start.value().get(), Some(Ok(_)));
+        let paid = matches!(checkout.pay.value().get(), Some(Ok(_)));
+        if started || paid {
+            catalog.refetch();
+        }
+    });
 
     // Announce an add once the server has taken it, not on the click. This sits
     // on `App` rather than on the button: the sticky action is rebuilt whenever
@@ -126,6 +146,7 @@ pub fn App() -> impl IntoView {
                         <Route path=StaticSegment("search") view=SearchScreen />
                         <Route path=(StaticSegment("p"), ParamSegment("id")) view=ProductScreen />
                         <Route path=StaticSegment("bag") view=BagScreen />
+                        <Route path=StaticSegment("checkout") view=CheckoutScreen />
                         <Route path=StaticSegment("login") view=LoginScreen />
                         <Route path=StaticSegment("admin") view=AdminScreen />
                     </Routes>
@@ -249,11 +270,26 @@ fn TopBar() -> impl IntoView {
 /// The bar above the tabs: add-to-bag on a product, checkout in the bag.
 #[component]
 fn StickyAction() -> impl IntoView {
-    let shop = Shop::from_context();
     let cart = Cart::from_context();
+    let checkout = Checkout::from_context();
     let screen = use_screen();
 
     let catalog = Catalog::from_context();
+
+    // Opening a checkout is a server round-trip; when it lands, go to the page
+    // that can pay for it. First-run guard because the action's value outlives
+    // this component, exactly as on the login redirect.
+    let navigate = use_navigate();
+    Effect::new(move |ran_before: Option<()>| {
+        // Read the signal *before* the guard. `&&` short-circuits, so testing
+        // `ran_before` first would skip the read on the effect's first run —
+        // and an effect that does not read a signal never subscribes to it, so
+        // this would fire exactly never.
+        let started = matches!(checkout.start.value().get(), Some(Ok(_)));
+        if ran_before.is_some() && started {
+            navigate("/checkout", Default::default());
+        }
+    });
 
     let action = move || match screen() {
         Screen::Product(slug) => match catalog.by_slug(&slug) {
@@ -265,15 +301,44 @@ fn StickyAction() -> impl IntoView {
                 <div class="border-t-2 border-ink/40 bg-ground px-[18px] py-3">
                     <button
                         class="btn btn-primary w-full justify-between px-4 py-[15px]"
-                        on:click=move |_| shop.flash("Payment step — coming next".to_string())
+                        disabled=move || checkout.busy()
+                        on:click=move |_| checkout.begin()
                     >
-                        "Checkout"
+                        {move || if checkout.busy() { "Holding stock…" } else { "Checkout" }}
                         <span>
                             {move || catalog.with(|products| money(cart.subtotal(products)))}
                         </span>
                     </button>
                 </div>
             </Show>
+        }
+        .into_any(),
+        Screen::Checkout => view! {
+            {move || {
+                checkout
+                    .pending_reservation()
+                    .map(|reservation| {
+                        let (id, total) = (reservation.id, reservation.total_label());
+                        view! {
+                            <div class="border-t-2 border-ink/40 bg-ground px-[18px] py-3">
+                                <button
+                                    class="btn btn-primary w-full justify-between px-4 py-[15px]"
+                                    disabled=move || checkout.busy()
+                                    on:click=move |_| checkout.pay_for(id)
+                                >
+                                    {move || {
+                                        if checkout.busy() {
+                                            "Taking payment…"
+                                        } else {
+                                            "Pay now"
+                                        }
+                                    }}
+                                    <span>{total.clone()}</span>
+                                </button>
+                            </div>
+                        }
+                    })
+            }}
         }
         .into_any(),
         _ => ().into_any(),

@@ -354,6 +354,68 @@ long-open tab will show stale counts until it reloads.
 upstream that no screen has ever rendered. It is not the stock record; this
 table is.
 
+## Checkout
+
+`migrations/0006_create_reservations.sql` adds `reservations` +
+`reservation_items` and `orders` + `order_items`, and `src/checkout.rs` holds
+the three writes. The lifecycle:
+
+```
+bag ──Checkout──▶ reservation pending      reserved += qty   (available drops)
+                    │                       bag emptied
+                    ├── Pay ──────────────▶ on_hand -= qty, reserved -= qty
+                    │                       order written, status fulfilled
+                    └── 15 minutes ───────▶ status expired, reserved -= qty
+                                            (the bag is NOT restored)
+```
+
+`available` therefore falls once, when the goods are spoken for, and does not
+move again on payment — the units simply stop being both on hand and reserved.
+Releasing `reserved` alone would put sold goods back on the shelf.
+
+Three rules are enforced by the schema rather than by remembering to check:
+
+- **One pending reservation per shopper** — a partial unique index on
+  `reservations (user_id) where status = 'pending'`. Pressing Checkout again
+  returns the reservation you already have, which is what routes you back to the
+  payment page instead of claiming more stock.
+- **One order per reservation** — `orders.reservation_id` is `unique`. Paying
+  twice returns the existing order id rather than writing a second.
+- **No overselling** — reserving is a single guarded statement,
+  `update inventory set reserved = reserved + $2 where product_id = $1 and
+  available >= $2`; `rows_affected() == 0` is the refusal. Two shoppers racing
+  for the last unit cannot both win, because the guard is evaluated against the
+  row the update locks.
+
+### Expiry
+
+There is no scheduler, so expiry is a sweep at the top of every checkout,
+payment and reservation read. It is one statement — the `update … returning`
+claims the rows, so two concurrent requests cannot both release the same hold —
+and it runs **on the pool, not inside the caller's transaction**. That placement
+is load-bearing: the callers can fail *after* sweeping (an expired checkout, an
+oversold line), and rolling their work back must not also un-expire reservations
+that genuinely ran out of time.
+
+### No new dependencies
+
+`timestamptz` would need a `chrono`/`time` feature on sqlx that this crate does
+not carry, so no timestamp is ever selected into Rust. The screen only needs the
+remaining time, which comes back as an integer:
+`greatest(0, extract(epoch from (expires_at - now()))::int)`.
+
+### Screens
+
+One route, `/checkout`, with three states: a receipt when `?order=` names one of
+your orders, the pending reservation when you have one, otherwise nothing to pay
+for. The receipt is keyed off the query string rather than off the action's
+value so a reload still shows it, and `get_order` is scoped to the buyer so the
+URL is not a way to read someone else's.
+
+`orders`/`order_items` copy the title and unit price rather than joining
+`products`: an order is a historical record and has to keep reading correctly
+after a re-import or a rename.
+
 ## Accounts and the admin console
 
 Two roles, `user` and `admin` (a Postgres enum), in `users`; sessions in

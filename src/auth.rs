@@ -67,7 +67,9 @@ impl AuthUser {
 }
 
 #[cfg(feature = "ssr")]
-pub use ssr::{bootstrap_admin, current_user_from_request, refuse, require_admin, require_user};
+pub use ssr::{
+    bootstrap_admin, current_user_from_request, refuse, require_admin, require_user, StatusCode,
+};
 
 #[cfg(feature = "ssr")]
 mod ssr {

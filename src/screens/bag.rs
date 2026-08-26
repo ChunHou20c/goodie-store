@@ -12,6 +12,7 @@ use leptos_router::components::A;
 use crate::auth::Auth;
 use crate::cart::Cart;
 use crate::catalog::{money, Catalog};
+use crate::checkout::Checkout;
 use crate::screens::login::FormError;
 use crate::ui::{Photo, WithCatalog};
 
@@ -19,6 +20,7 @@ use crate::ui::{Photo, WithCatalog};
 pub fn BagScreen() -> impl IntoView {
     let cart = Cart::from_context();
     let auth = Auth::from_context();
+    let checkout = Checkout::from_context();
     let catalog = Catalog::from_context();
     let subtotal = move || catalog.with(|products| money(cart.subtotal(products)));
 
@@ -41,6 +43,31 @@ pub fn BagScreen() -> impl IntoView {
                     </Suspense>
                 </div>
             </div>
+
+            // The pending checkout is a resource read, so it needs a boundary:
+            // without one a fresh server render sees it unresolved and the card
+            // silently never appears.
+            <Suspense fallback=|| ()>
+                <Show when=move || checkout.has_pending()>
+                    <A
+                        href="/checkout"
+                        {..}
+                        class="flex items-center justify-between gap-3 border-b-2 border-ink/40 bg-accent-100 px-[18px] py-3.5 no-underline"
+                    >
+                        <span>
+                            <span class="block font-heading text-[14px] font-extrabold text-accent-800">
+                                "Payment pending"
+                            </span>
+                            <span class="mt-[3px] block text-[11.5px] text-ink/62">
+                                "Your last checkout is holding stock — finish it."
+                            </span>
+                        </span>
+                        <span class="text-[11.5px] font-extrabold uppercase tracking-[0.1em] text-accent-700">
+                            "Continue"
+                        </span>
+                    </A>
+                </Show>
+            </Suspense>
 
             <WithCatalog>
                 {move || {
