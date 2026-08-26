@@ -283,6 +283,51 @@ is in flight rather than guessing ahead of it.
 deducts it, and nothing checks a quantity against it. Checkout is still the
 `"Payment step — coming next"` toast.
 
+## Inventory
+
+`inventory` (`migrations/0005_create_inventory.sql`) is one row per product:
+`on_hand` is what is in the building, `reserved` is what is already spoken for,
+and `available` is a **generated** column — `on_hand - reserved`, computed by
+Postgres so it cannot drift and so a query can filter on it directly. A
+`reserved <= on_hand` constraint keeps `available` from going negative, and also
+stops stock being shipped out from under a reservation.
+
+Every product in the catalogue at the time of the migration starts at ten.
+
+Nothing writes `reserved` yet. **The bag does not reserve** — `cart_items` is a
+shopping list, not a claim on stock; reserving is checkout's job, and checkout is
+still a toast. So today `reserved` is 0 everywhere and `available` equals
+`on_hand`.
+
+### Where stock comes from
+
+Two writers so far, and neither of them is the shop:
+
+- **Migration 0005**, once — ten for every product in the catalogue at that
+  point.
+- **`import_products`**, on every run — `IMPORT_STOCK_UNITS` (ten) added to
+  every product it fetched, whether that product is new or was already stocked.
+  A new product gets its first `inventory` row; an existing one has the units
+  added to what is there. `reserved` is never touched, so a delivery cannot
+  disturb what is already spoken for.
+
+An import is therefore a **delivery, not a correction**, and the two halves of
+it differ: the catalogue half is idempotent, the stock half is not. Importing
+ids 1–5 three times leaves those products at thirty. That is intended — it is
+how you record another shipment — but it means the import button is not a
+"refresh" button as far as stock is concerned. Both halves share one
+transaction, so a failed run leaves neither the row nor the stock.
+
+One thing this table still does *not* do, deliberately: **nothing reads it.**
+The "In stock" chip and the product page still read `products.availability`, the
+free-text string the importer copies from upstream, which is unrelated to these
+numbers and can disagree with them. Moving the display onto `available` is a
+later step.
+
+`products.stock` remains what it always was: a column the importer fills from
+upstream that no screen has ever rendered. It is not the stock record; this
+table is.
+
 ## Accounts and the admin console
 
 Two roles, `user` and `admin` (a Postgres enum), in `users`; sessions in

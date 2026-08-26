@@ -256,12 +256,24 @@ impl Catalog {
     }
 }
 
+/// Stock an import puts on the shelf, per product fetched.
+///
+/// This is a **delivery**, not a correction: every run adds this much to every
+/// product in the range, so importing the same range twice leaves twice the
+/// stock. That is deliberate — re-running an import is how you record another
+/// shipment arriving — but it does mean the catalogue half of an import is
+/// idempotent while the stock half is not.
+pub const IMPORT_STOCK_UNITS: i32 = 10;
+
 /// What one run of [`import_products`] did.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportReport {
     pub fetched: usize,
     pub inserted: usize,
     pub updated: usize,
+    /// Units added to `inventory` by this run — [`IMPORT_STOCK_UNITS`] per
+    /// product fetched, new or not.
+    pub stocked_units: usize,
     /// `total` as reported by the upstream API.
     pub total_available: usize,
 }
@@ -269,18 +281,25 @@ pub struct ImportReport {
 impl ImportReport {
     pub fn summary(&self) -> String {
         format!(
-            "{} imported, {} refreshed — {} available upstream",
-            self.inserted, self.updated, self.total_available
+            "{} imported, {} refreshed, +{} in stock — {} available upstream",
+            self.inserted, self.updated, self.stocked_units, self.total_available
         )
     }
 }
 
-/// Pull a slice of the upstream catalogue into `products`. **Admin only.**
+/// Pull a slice of the upstream catalogue into `products`, and put stock on the
+/// shelf for everything it pulled. **Admin only.**
 ///
 /// The browser never talks to dummyjson: the server fetches, maps and upserts,
-/// and only for an admin. Re-running the same range is idempotent — rows are
-/// matched on the upstream id and refreshed, and `note` is left alone because it
-/// is ours, not theirs.
+/// and only for an admin. Re-running the same range leaves the catalogue
+/// unchanged — rows are matched on the upstream id and refreshed, and `note` is
+/// left alone because it is ours, not theirs.
+///
+/// The stock half is **not** idempotent: every run adds [`IMPORT_STOCK_UNITS`]
+/// to every product it fetched, new or not, because an import is a delivery
+/// arriving rather than a correction. Importing the same range twice therefore
+/// leaves twice the stock. Both halves share one transaction, so a run that
+/// fails partway leaves neither.
 #[server(endpoint = "import_products")]
 pub async fn import_products(limit: u32, skip: u32) -> Result<ImportReport, ServerFnError> {
     use crate::auth::require_admin;
@@ -313,6 +332,11 @@ pub async fn import_products(limit: u32, skip: u32) -> Result<ImportReport, Serv
         } else {
             report.updated += 1;
         }
+
+        // Same transaction as the upsert: a run that fails partway leaves
+        // neither the row nor the stock behind.
+        self::import::add_stock(&mut tx, row.id, IMPORT_STOCK_UNITS).await?;
+        report.stocked_units += IMPORT_STOCK_UNITS as usize;
     }
 
     tx.commit()
@@ -512,6 +536,32 @@ returnPolicy,minimumOrderQuantity,tags,thumbnail";
 
     /// Returns true when the row was inserted, false when it was refreshed.
     /// `xmax = 0` is the standard way to tell those apart in an upsert.
+    /// Put `units` on the shelf for one product.
+    ///
+    /// A product the catalogue has not seen before gets its first `inventory`
+    /// row; one that is already stocked has the units added to what is there.
+    /// `reserved` is never touched — a delivery cannot disturb what is already
+    /// spoken for, and since this only raises `on_hand` it cannot trip the
+    /// `reserved <= on_hand` constraint.
+    pub async fn add_stock(
+        tx: &mut Transaction<'_, Postgres>,
+        product_id: i32,
+        units: i32,
+    ) -> Result<(), ServerFnError> {
+        sqlx::query(
+            "insert into inventory (product_id, on_hand) values ($1, $2) \
+             on conflict (product_id) do update \
+             set on_hand = inventory.on_hand + excluded.on_hand, updated_at = now()",
+        )
+        .bind(product_id)
+        .bind(units)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| ServerFnError::new(format!("could not stock product {product_id}: {e}")))?;
+
+        Ok(())
+    }
+
     pub async fn upsert(
         tx: &mut Transaction<'_, Postgres>,
         row: &Row,
