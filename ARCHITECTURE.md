@@ -589,7 +589,8 @@ The repository also carries the starter's Playwright scaffold in `end2end/`
 (`cargo leptos end-to-end`, config in `[package.metadata.leptos]`). It runs on
 release, not on every commit: the suite needs a database and a running server,
 so `release.yml` brings up a Postgres service, starts the freshly built
-container against it and runs the specs before anything is published. CI keeps
+container against it and runs the specs before anything is published — chromium
+only, since nixpkgs' webkit does not launch on a stock ubuntu runner. CI keeps
 to `nix build` plus the curl-level container smoke test, and the flake's source
 fileset leaves `end2end/` out of the build entirely.
 
