@@ -3,6 +3,9 @@ pub mod auth;
 pub mod cart;
 pub mod catalog;
 pub mod checkout;
+// Server-only: the middleware and its counters have no meaning in the browser.
+#[cfg(feature = "ssr")]
+pub mod ratelimit;
 pub mod screens;
 pub mod shop;
 pub mod ui;

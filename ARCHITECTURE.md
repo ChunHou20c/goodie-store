@@ -434,6 +434,38 @@ unlabelled time would silently be the server's.
 Two roles, `user` and `admin` (a Postgres enum), in `users`; sessions in
 `sessions`. Both arrive with `migrations/0003_create_users.sql`.
 
+### Rate limiting the sign-in
+
+Guessing a password is cheap to attempt and expensive to check — argon2 is
+deliberately slow — so `/api/sign_in` carries a per-address budget:
+`ratelimit::MAX_FAILURES` (5) failures per `WINDOW` (60s), then `429` with a
+`Retry-After`. Nothing else on `/api` is touched. Counters live in memory, in a
+map pruned on every write so an attacker rotating source addresses cannot grow
+it without bound; they reset with the process and are not shared between
+replicas, which suits one container and would not suit a fleet.
+
+Three things about it are not obvious:
+
+- **The layer must be applied last**, wrapping the finished router. Placed
+  directly after the `/api` route it silently never runs — no error, the
+  middleware is simply not entered. `throttle_sign_in` therefore narrows to
+  `/api/sign_in` itself and returns immediately for everything else.
+- **Failures are told from successes by the `serverfnerror` header**, not the
+  status. A plain form post — an `ActionForm` submitted before hydration —
+  answers `302` whether the password was right or wrong, so status alone would
+  count every successful no-JS login as a failure.
+- **The refusal body must be `ServerError|<message>`.** The client decodes any
+  400–599 body with `server_fn`'s codec, so a plain `"Too many attempts"` would
+  reach the sign-in form as *`Invalid format: missing delimiter`*. In the right
+  shape it renders through `FormError` like any other error.
+
+Keyed on address, not on email: locking an account by name would hand anyone a
+targeted denial of service against a known user. A successful sign-in clears the
+budget, so mistyping twice and then getting it right costs nothing.
+`X-Forwarded-For` is only honoured when `APP_TRUST_FORWARDED_FOR=1` — trusting
+it by default would let anyone bypass the limiter by inventing an address per
+request.
+
 ### How a session works
 
 Signing in mints 32 random bytes, base64url-encoded, and returns them in a

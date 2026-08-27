@@ -4,6 +4,7 @@ async fn main() {
     use axum::routing::post;
     use axum::Router;
     use goodie_never_deliver::app::*;
+    use goodie_never_deliver::ratelimit::{throttle_sign_in, LoginLimiter};
     use leptos::logging::log;
     use leptos::prelude::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
@@ -46,6 +47,10 @@ async fn main() {
     let provide_pool = move || provide_context(context_pool.clone());
     let provide_pool_fallback = provide_pool.clone();
 
+    // Guessing a password is cheap to attempt and expensive to check, so
+    // sign-in gets a per-address budget. See `ratelimit`.
+    let limiter = LoginLimiter::new();
+
     let app =
         Router::new()
             .route(
@@ -70,15 +75,29 @@ async fn main() {
                 provide_pool_fallback,
                 shell,
             ))
+            // Applied **last, on purpose**. Placed straight after the `/api`
+            // route it silently never runs — verified by probe: the middleware
+            // was not entered for any request. Wrapping the finished router is
+            // what works, so every request passes through it and
+            // `throttle_sign_in` narrows to `/api/sign_in` itself.
+            .layer(axum::middleware::from_fn_with_state(
+                limiter,
+                throttle_sign_in,
+            ))
             .with_state(leptos_options);
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
     log!("listening on http://{}", &addr);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app.into_make_service())
-        .await
-        .unwrap();
+    // `into_make_service` alone would leave `ConnectInfo<SocketAddr>`
+    // unavailable, and the rate limiter has no address to charge.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 #[cfg(not(feature = "ssr"))]
