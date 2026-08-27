@@ -586,20 +586,24 @@ Unit tests cover the money formatter, the shelf one-liner, the chip list and the
 search/filter composition in `src/catalog.rs`.
 
 The repository also carries the starter's Playwright scaffold in `end2end/`
-(`cargo leptos end-to-end`, config in `[package.metadata.leptos]`). Nothing runs
-it automatically — CI only calls `nix build`, and the flake's source fileset
-leaves `end2end/` out entirely.
+(`cargo leptos end-to-end`, config in `[package.metadata.leptos]`). It runs on
+release, not on every commit: the suite needs a database and a running server,
+so `release.yml` brings up a Postgres service, starts the freshly built
+container against it and runs the specs before anything is published. CI keeps
+to `nix build` plus the curl-level container smoke test, and the flake's source
+fileset leaves `end2end/` out of the build entirely.
 
 Both the runner and its browsers come from nixpkgs, so there is no `npm install`
 step and no `playwright install`: the dev shell puts `playwright` on PATH and
 links `end2end/node_modules` at the same store copy, which is what lets the specs
 `import { test } from "@playwright/test"`. Run them with `playwright test` from
-`end2end/`.
+`end2end/`, against a server on `site-addr` — set `E2E_BASE_URL` for one
+elsewhere.
 
 `smoke.spec.ts` needs no server and exists to prove the browsers launch.
-`pages.spec.ts` wants one: it walks every route signed out and checks the screen
-that belongs to it came back, which is as far as the app is worth asserting on
-while it is still being built. The starter's `example.spec.ts` is gone — it
+`pages.spec.ts` wants one: it walks every route signed out and checks the status
+that came back — nothing about the markup, which is as far as the app is worth
+asserting on while the screens are still being built. The starter's `example.spec.ts` is gone — it
 asserted the original template's "Welcome to Leptos" markup and never passed
 against this app.
 

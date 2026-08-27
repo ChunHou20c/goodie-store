@@ -23,6 +23,24 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+
+    # The end-to-end suite needs a database and a running server. CI keeps to
+    # `nix build` and a curl-level smoke test on every commit; paying for a real
+    # browser run is worth it here, where the result is published.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: goodie
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: goodie
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U goodie"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v5
         with:
@@ -55,6 +73,34 @@ jobs:
           cp -L result-windows/*.zip  dist/
           ls -lh dist
 
+      # Against the container, not a local build: what gets tested is what gets
+      # published. Host networking so it reaches the Postgres service, which
+      # GitHub publishes on the runner's own localhost.
+      - name: Start the container against Postgres
+        run: |
+          set -euo pipefail
+          image=$(docker load -i result-container | sed -n 's/^Loaded image: //p')
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "loaded $image"
+
+          docker run -d --name goodie --network host \
+            -e DATABASE_URL='postgres://goodie:secret@127.0.0.1:5432/goodie' \
+            -e LEPTOS_SITE_ADDR='0.0.0.0:3000' \
+            "$image"
+
+          # The server migrates and seeds on first boot, so give it room.
+          curl -sf --retry 60 --retry-delay 2 --retry-connrefused \
+            -o /dev/null http://127.0.0.1:3000/
+
+      # The runner and the browsers both come from the flake, so this is the
+      # same command a developer runs in `nix develop`.
+      - name: End-to-end tests
+        run: nix develop --command bash -c 'cd end2end && playwright test'
+
+      - name: Server log
+        if: always()
+        run: docker logs goodie || true
+
       - name: Checksums
         run: |
           cd dist
@@ -64,8 +110,8 @@ jobs:
       - name: Push the container to GHCR
         run: |
           set -euo pipefail
-          image=$(docker load -i result-container | sed -n 's/^Loaded image: //p')
-          echo "built $image"
+          # $IMAGE was loaded and exported by the end-to-end step above.
+          echo "publishing $IMAGE"
 
           # ghcr.io wants a lowercase owner; repository names already are.
           repo="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
@@ -75,7 +121,7 @@ jobs:
             | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
 
           for t in "$tag" "${tag#v}" latest; do
-            docker tag "$image" "$repo:$t"
+            docker tag "$IMAGE" "$repo:$t"
             docker push "$repo:$t"
           done
 
