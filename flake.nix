@@ -40,6 +40,26 @@
 
         postgresql = pkgs.postgresql_18;
 
+        # Playwright needs two things from nix, and supplying only one of them
+        # is the usual way to get stuck:
+        #
+        #   1. the browsers. Playwright's own downloads are dynamically linked
+        #      against an FHS layout and refuse to start on NixOS
+        #      (`libglib-2.0.so.0: cannot open shared object file`). nixpkgs
+        #      ships patched builds, found through PLAYWRIGHT_BROWSERS_PATH.
+        #   2. the `playwright` CLI. Nothing else puts it on PATH — without it
+        #      the runner is reachable only as `npx playwright` from inside
+        #      end2end/, and from anywhere else npx silently fetches its own
+        #      copy from the registry, which then tries (and fails) to download
+        #      browsers of its own.
+        #
+        # playwright-test provides the CLI and already defaults
+        # PLAYWRIGHT_BROWSERS_PATH to the matching browser set; the env below
+        # sets it explicitly as well, so an `npx playwright` run against
+        # end2end/node_modules lands on the same browsers.
+        playwrightTest = pkgs.playwright-test;
+        playwrightBrowsers = pkgs.playwright-driver.browsers;
+
         # cargo-leptos is built with the `no_downloads` feature in nixpkgs, so it
         # never fetches toolchain binaries at runtime — it picks up sass,
         # tailwindcss, wasm-opt and wasm-bindgen from PATH instead. All four have
@@ -483,6 +503,7 @@
             pg-reset
 
             pkgs.nodejs_24 # tailwind plugins, playwright e2e, npx
+            playwrightTest # the `playwright` CLI, version-matched to the browsers
 
             # Native deps for the usual axum/sqlx/reqwest stack.
             pkgs.pkg-config
@@ -501,6 +522,12 @@
             # here is a secret — the cluster is a throwaway on localhost.
             ADMIN_EMAIL = "admin@goodie.test";
             ADMIN_PASSWORD = "admin-dev-password";
+
+            # e2e: run against the patched browsers above, and never let npm or
+            # `playwright install` try to fetch the unusable upstream ones.
+            # `playwright test` from end2end/ picks up playwright.config.ts.
+            PLAYWRIGHT_BROWSERS_PATH = "${playwrightBrowsers}";
+            PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
           };
 
           shellHook = ''
@@ -518,9 +545,25 @@
               echo "         run: cargo update -p wasm-bindgen --precise ${wasmBindgen.version}"
             fi
 
+            # The test files `import { test } from "@playwright/test"`, and
+            # tsserver only resolves that through node_modules. Point it at the
+            # very same store copy the CLI runs: node resolves symlinks to
+            # their realpath, so both sides load one module instance. Two
+            # distinct copies — an npm install alongside the nix CLI — make
+            # Playwright abort with "did not expect test() to be called here".
+            nm="$root/end2end/node_modules"
+            if [ -d "$nm" ] && [ ! -L "$nm" ]; then
+              echo "warning: end2end/node_modules is a real directory (npm install?)."
+              echo "         Playwright will load two copies of @playwright/test and fail;"
+              echo "         run: rm -rf end2end/node_modules, then re-enter the shell."
+            else
+              ln -sfn ${playwrightTest}/lib/node_modules "$nm"
+            fi
+
             echo "goodie-never-deliver dev shell"
             echo "  $(rustc --version)  |  cargo-leptos ${pkgs.cargo-leptos.version}  |  wasm-bindgen ${wasmBindgen.version}"
             echo "  tailwindcss ${pkgs.tailwindcss_4.version}  |  node $(node --version)  |  postgres ${postgresql.version}"
+            echo "  playwright ${playwrightTest.version} (CLI + browsers from nix)"
             echo "  pg-start / pg-stop / pg-reset   cargo leptos watch"
           '';
         };

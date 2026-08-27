@@ -26,7 +26,8 @@ every pinned tool on `PATH`:
 | `cargo-leptos` | nixpkgs | built with `no_downloads`, so it uses the tools below from `PATH` |
 | `wasm-bindgen` | nixpkgs (`wasm-bindgen-cli_0_2_126`) | must match the `wasm-bindgen` crate exactly |
 | `wasm-opt`, `sass`, `tailwindcss` | binaryen, dart-sass, tailwindcss v4 | the other binaries `cargo-leptos` shells out to |
-| `node`, `npx` | nodejs 24 | Tailwind plugins, Playwright e2e |
+| `node`, `npx` | nodejs 24 | Tailwind plugins |
+| `playwright` | nixpkgs (`playwright-test`) | e2e runner **and** its browsers; Playwright's own downloads are not linkable on NixOS |
 | `postgres`, `psql`, `sqlx` | postgresql 18, sqlx-cli | plus the `pg-*` helpers below |
 
 ### Postgres
@@ -585,9 +586,19 @@ Unit tests cover the money formatter, the shelf one-liner, the chip list and the
 search/filter composition in `src/catalog.rs`.
 
 The repository also carries the starter's Playwright scaffold in `end2end/`
-(`cargo leptos end-to-end`, config in `[package.metadata.leptos]`). Its one
-example spec still asserts the original template's "Welcome to Leptos" markup,
-so it fails against this app until it is rewritten.
+(`cargo leptos end-to-end`, config in `[package.metadata.leptos]`). Nothing runs
+it automatically — CI only calls `nix build`, and the flake's source fileset
+leaves `end2end/` out entirely.
+
+Both the runner and its browsers come from nixpkgs, so there is no `npm install`
+step and no `playwright install`: the dev shell puts `playwright` on PATH and
+links `end2end/node_modules` at the same store copy, which is what lets the specs
+`import { test } from "@playwright/test"`. Run them with `playwright test` from
+`end2end/`.
+
+Of the two specs, `smoke.spec.ts` needs no server and exists to prove the browsers
+launch; `example.spec.ts` still asserts the original template's "Welcome to Leptos"
+markup, so it fails against this app until it is rewritten.
 
 ## Building for release
 
