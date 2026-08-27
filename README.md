@@ -34,7 +34,7 @@ docker run --rm -p 3000:3000 \
   ghcr.io/chunhou20c/goodie-store:latest
 ```
 
-Tagged `latest`, `v0.1.0-alpha` and `0.1.0-alpha`. It listens on `0.0.0.0:3000`.
+Tagged `latest`, `v0.1.1` and `0.1.1`. It listens on `0.0.0.0:3000`.
 To reach a Postgres running on the host, add `--network host` (Linux) or use
 `host.docker.internal` in the URL (Docker Desktop).
 
@@ -67,16 +67,16 @@ services:
 ### Linux
 
 ```bash
-curl -LO https://github.com/ChunHou20c/goodie-store/releases/download/v0.1.0-alpha/goodie-never-deliver-0.1.0-x86_64-linux.tar.gz
-tar xzf goodie-never-deliver-0.1.0-x86_64-linux.tar.gz
-cd goodie-never-deliver-0.1.0-x86_64-linux
+curl -LO https://github.com/ChunHou20c/goodie-store/releases/download/v0.1.1/goodie-never-deliver-0.1.1-x86_64-linux.tar.gz
+tar xzf goodie-never-deliver-0.1.1-x86_64-linux.tar.gz
+cd goodie-never-deliver-0.1.1-x86_64-linux
 DATABASE_URL='postgres://user:pass@host:5432/goodie' ./run.sh
 ```
 
 ### Windows
 
 Download and unzip
-[`goodie-never-deliver-0.1.0-x86_64-windows.zip`](https://github.com/ChunHou20c/goodie-store/releases/download/v0.1.0-alpha/goodie-never-deliver-0.1.0-x86_64-windows.zip),
+[`goodie-never-deliver-0.1.1-x86_64-windows.zip`](https://github.com/ChunHou20c/goodie-store/releases/download/v0.1.1/goodie-never-deliver-0.1.1-x86_64-windows.zip),
 then from that folder:
 
 ```bat
@@ -94,7 +94,7 @@ variables below.
 A `SHA256SUMS` file sits next to the archives on the release page:
 
 ```bash
-curl -LO https://github.com/ChunHou20c/goodie-store/releases/download/v0.1.0-alpha/SHA256SUMS
+curl -LO https://github.com/ChunHou20c/goodie-store/releases/download/v0.1.1/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
