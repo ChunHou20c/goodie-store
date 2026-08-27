@@ -235,6 +235,17 @@
 
             CARGO_BUILD_TARGET = target;
 
+            # Compile-time, not runtime, and the reason these builds need it at
+            # all: `HydrationScripts` appends `_bg` to the wasm file name unless
+            # `option_env!("LEPTOS_OUTPUT_NAME")` was set when the crate was
+            # compiled (leptos/src/hydration/mod.rs). cargo-leptos sets it for
+            # the native build, but these run plain `cargo build`, so without
+            # this line the served HTML asks for `<name>_bg.wasm` while the site
+            # package beside it holds `<name>.wasm` — hydration 404s and the
+            # page never comes alive. The container is built the other way and
+            # so never showed it.
+            LEPTOS_OUTPUT_NAME = pname;
+
             # cc-rs (ring, and the other -sys crates) looks for the per-target
             # CC/AR pair rather than the plain ones.
             "CC_${builtins.replaceStrings [ "-" ] [ "_" ] target}" = "${ccFor crossPkgs}cc";
