@@ -596,9 +596,12 @@ links `end2end/node_modules` at the same store copy, which is what lets the spec
 `import { test } from "@playwright/test"`. Run them with `playwright test` from
 `end2end/`.
 
-Of the two specs, `smoke.spec.ts` needs no server and exists to prove the browsers
-launch; `example.spec.ts` still asserts the original template's "Welcome to Leptos"
-markup, so it fails against this app until it is rewritten.
+`smoke.spec.ts` needs no server and exists to prove the browsers launch.
+`pages.spec.ts` wants one: it walks every route signed out and checks the screen
+that belongs to it came back, which is as far as the app is worth asserting on
+while it is still being built. The starter's `example.spec.ts` is gone — it
+asserted the original template's "Welcome to Leptos" markup and never passed
+against this app.
 
 ## Building for release
 
