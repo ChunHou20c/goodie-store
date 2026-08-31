@@ -9,6 +9,8 @@ A live instance runs at **[store.chunhou20c.dev](https://store.chunhou20c.dev)**
 same build as the [latest release](https://github.com/ChunHou20c/goodie-store/releases/latest),
 hosted on my homelab.
 
+![The Goodie Store home page at a phone-width viewport](assets/home-mobile.png)
+
 ## Stack
 
 | | |
