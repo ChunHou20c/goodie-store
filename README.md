@@ -5,6 +5,10 @@ in, and — as an admin — import more products from an upstream API. Every scr
 is server-rendered and hydrated, on a design system ported from a Claude Design
 canvas.
 
+A live instance runs at **[store.chunhou20c.dev](https://store.chunhou20c.dev)** — the
+same build as the [latest release](https://github.com/ChunHou20c/goodie-store/releases/latest),
+hosted on my homelab.
+
 ## Stack
 
 | | |
