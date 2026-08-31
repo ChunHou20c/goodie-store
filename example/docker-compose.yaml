@@ -1,0 +1,21 @@
+# compose.yaml — docker compose up
+services:
+  goodie:
+    image: ghcr.io/chunhou20c/goodie-store:latest
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgres://goodie:secret@db:5432/goodie
+      ADMIN_EMAIL: admin@goodie.test
+      ADMIN_PASSWORD: admin-dev-password
+    depends_on:
+      db: { condition: service_healthy }
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: goodie
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: goodie
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goodie"]
+      interval: 5s
+      retries: 10
